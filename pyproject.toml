@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "owl-widgets"
+version = "0.1.0"
+description = "OWL: composable optics widgets for Python notebooks"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = ["numpy>=2", "anywidget>=0.9", "traitlets>=5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/owl"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src/owl", "/tests", "/notebooks", "/pyproject.toml", "/README.md"]
