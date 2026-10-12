@@ -2,11 +2,11 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo==0.24.0",
-#     "optics-widget-library",
+#     "owl-widgets",
 # ]
 #
 # [tool.uv.sources]
-# optics-widget-library = { path = "../" }
+# owl-widgets = { path = "../" }
 # ///
 
 import marimo
@@ -19,8 +19,12 @@ app = marimo.App(width="medium")
 def _():
     import marimo as mo
     from owl import (
-        ApertureFocusStudy, ApertureStudySpec, PupilMapStudy,
-        RayWaveStudy, StopRayStudy, StopStudySpec,
+        ApertureFocusStudy,
+        ApertureStudySpec,
+        PupilMapStudy,
+        RayWaveStudy,
+        StopRayStudy,
+        StopStudySpec,
     )
 
     return (
