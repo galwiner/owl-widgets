@@ -15,14 +15,6 @@ from .core import (
     ThinLens,
 )
 from .cross_section import CrossSection
-from .lightfield import (
-    LightFieldLayer,
-    LightFieldSpec,
-    calculate_light_field,
-    layer_beta,
-    sample_radiance,
-)
-from .plenoptic import PlenopticSpec, calculate_plenoptic, microlens_geometry
 from .stop_study import StopStudySpec, calculate_stop_study
 from .studies import (
     ApertureFocusStudy,
@@ -48,20 +40,15 @@ __all__ = [
     "GaussianBeam",
     "GaussianTrace",
     "Interface",
-    "layer_beta",
-    "LightFieldLayer",
-    "LightFieldSpec",
-    "calculate_light_field",
-    "microlens_geometry",
+
     "Mirror",
-    "PlenopticSpec",
-    "calculate_plenoptic",
+
     "ThickLens",
     "OpticalSystem",
     "PupilMapStudy",
     "RayTrace",
     "RayWaveStudy",
-    "sample_radiance",
+
     "StopRayStudy",
     "StopStudy",
     "StopStudySpec",

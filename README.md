@@ -9,45 +9,18 @@ Small, inspectable optics experiments in Python notebooks. Built on anywidget; i
 From this checkout's `optics` directory:
 
 ```sh
-uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/rays_and_gaussians.py
-uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/optical_elements.py
+uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/optics_basics.py
 uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/apertures.py
-uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/light_field_ray_space.py
-uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/plenoptic_cameras.py
 ```
 
 The notebook declares all its dependencies inline (PEP 723). Its `[tool.uv.sources]` entry resolves OWL from `..`, relative to the notebook, as an editable local package. No global installation or `sys.path` modifications are needed. Keep the checkout together: the notebook alone is **not** portable until OWL is published or its source points at an accessible pinned distribution.
 
 After changing OWL's source, pass `--reinstall-package owl-widgets` so the sandbox rebuilds the local wheel; `--refresh-package` alone leaves an already-installed build in place.
 
-- `rays_and_gaussians.py`: free propagation, thin lens, ray focus versus Gaussian waist, wavelength sweep, experiment settings.
-- `optical_elements.py`: `Mirror()`, curved `Mirror(100)`, a flat-interface glass slab, and `ThickLens(60, -60, 10, 1.5)` alongside explicit interfaces.
-- `apertures.py`: the complete aperture study built from `ApertureStudy` and `StopStudy`: controlled Fresnel aperture sweeps, brightest-plane spots, launch-height-colored ray/wave comparisons, stop taxonomy, field-height-colored ray fans, relative illumination, and cat’s-eye pupil maps.
-- `light_field_ray_space.py`: ray space for a three-layer occluding scene, sub-aperture views, shear-and-sum refocusing, depth from focus, and the aperture-as-baseline trade.
-- `plenoptic_cameras.py`: plenoptic 1.0, Keplerian 2.0, and Galilean 2.0 side by side — raw sensor, microimages, ray-space sampling tiles, patch rendering with seam continuity, and multi-baseline depth.
+- `optics_basics.py`: free propagation, thin lenses, ray focus versus Gaussian waist, wavelength tuning, mirrors, interfaces, and thick lenses.
+- `apertures.py`: controlled Fresnel aperture sweeps, brightest-plane spots, launch-height-colored ray/wave comparisons, stop taxonomy, field-height-colored ray fans, relative illumination, and cat’s-eye pupil maps.
 
 Each experiment owns independent inputs. Study controls update their plots and the notebook's downstream tables and narrative together.
-
-## Light fields and plenoptic cameras
-
-`lightfield.py` and `plenoptic.py` add a flatland light-field model and a unified plenoptic camera model. One transverse axis is simulated, so the light field \(L(u,s)\) is a 2D array that displays directly as an image.
-
-All three camera designs are the **same geometry**: a microlens array at \(z_\mu\) with the sensor \(b\) behind it, every microlens obeying \(1/a + 1/b = 1/f_\mu\). Only the choice of conjugate plane \(a\) differs — the aperture for `plenoptic_1`, the image itself for `keplerian` (\(a>0\), inverted microimages) and `galilean` (\(a<0\), erect). Plenoptic 1.0's resolution penalty is the \(a \to v_0\) limit, where \(|m| = b/a \approx f_\mu/v_0\) collapses the rendered patch to one pixel per microlens. Throughout, spatial samples × angular samples = total pixels.
-
-```python
-from owl import LightFieldSpec, PlenopticSpec, calculate_light_field, calculate_plenoptic
-
-light_field = calculate_light_field(LightFieldSpec())
-light_field["refocus"]["regions"]          # depth from focus, per visible region
-light_field["ray_space"]["radiance"]       # L(u, s) as [u, s]
-
-camera = calculate_plenoptic(PlenopticSpec(mode="keplerian", microlens_offset_mm=3.0))
-camera["geometry"]["matched_patch_pixels"] # = pixels_per_lens * b / a
-camera["render"]["sweep"]                  # patch size -> rendered plane, seam ratio
-camera["depth"]["estimates"]               # multi-baseline disparity -> object distance
-```
-
-Both follow the existing study pattern: a frozen, validated, JSON-serializable spec in, a strict-JSON dictionary of plot-ready values out, no plotting in Python. Teaching notes with derivations, worked numbers, and self-check questions are in [`docs/lightfield/`](docs/lightfield/README.md).
 
 ## Compose a bench
 
@@ -181,12 +154,11 @@ Systems list elements in **encounter order**, not sorted laboratory z. Mirrors r
 
 ```sh
 uv run --no-project --refresh-package owl-widgets --with . --with pytest pytest tests
-uvx --from marimo==0.24.0 marimo check --strict notebooks/rays_and_gaussians.py notebooks/optical_elements.py notebooks/apertures.py notebooks/light_field_ray_space.py notebooks/plenoptic_cameras.py
-uvx --from marimo==0.24.0 marimo export html --sandbox notebooks/rays_and_gaussians.py -o /tmp/owl-experiments.html
-uvx --from marimo==0.24.0 marimo export html --sandbox notebooks/optical_elements.py -o /tmp/owl-optical-elements.html
+uvx --from marimo==0.24.0 marimo check --strict notebooks/optics_basics.py notebooks/apertures.py
+
+uvx --from marimo==0.24.0 marimo export html --sandbox notebooks/optics_basics.py -o /tmp/owl-optics-basics.html
 uvx --from marimo==0.24.0 marimo export html --sandbox notebooks/apertures.py -o /tmp/owl-apertures.html
-uvx --from marimo==0.24.0 marimo export html --sandbox notebooks/light_field_ray_space.py -o /tmp/owl-light-field.html
-uvx --from marimo==0.24.0 marimo export html --sandbox notebooks/plenoptic_cameras.py -o /tmp/owl-plenoptic.html
+
 uv build
 ```
 
