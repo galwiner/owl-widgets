@@ -2,11 +2,8 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo==0.24.0",
-#     "owl-widgets",
+#     "owl-widgets==0.1.1",
 # ]
-#
-# [tool.uv.sources]
-# owl-widgets = { path = "../" }
 # ///
 
 import marimo
@@ -77,19 +74,19 @@ def _(focus_result, mo):
     _r = focus_result["gaussian_reference"]
     _sep = _r["geometric_image_z_mm"] - _r["true_waist_z_mm"]
     mo.md(rf"""
-    ### 2f&ndash;2f: object at f$, image at f$
+    ### 2f&ndash;2f: object at $2f$, image at $2f$
 
     | | value | |
     |:--|--:|:--|
-    | waist $ | {_s['waist_mm']:g} mm | current control |
+    | waist $w_0$ | {_s['waist_mm']:g} mm | current control |
     | wavelength $\lambda$ | {_s['wavelength_nm'] / 1000:g} µm | current control |
-    | waist to lens $ | {_s['distance_mm']:g} mm | current control |
-    | **focal length * | **{_s['focal_length_mm']:g} mm** | current control |
-    | Rayleigh range $ | {_r['rayleigh_range_mm']:.0f} mm | $\pi w_0^2/\lambda$ |
-    | beam at lens $ | {_r['lens_radius_mm']:.3f} mm | propagated Gaussian |
-    | **geometric image plane** | $ = {_r['geometric_image_z_mm']:g} mm | thin-lens conjugate |
+    | waist to lens $s$ | {_s['distance_mm']:g} mm | current control |
+    | **focal length $f$** | **{_s['focal_length_mm']:g} mm** | current control |
+    | Rayleigh range $z_R$ | {_r['rayleigh_range_mm']:.0f} mm | $\pi w_0^2/\lambda$ |
+    | beam at lens $w_L$ | {_r['lens_radius_mm']:.3f} mm | propagated Gaussian |
+    | **geometric image plane** | $z = {_r['geometric_image_z_mm']:g}$ mm | thin-lens conjugate |
     | spot there | {_r['geometric_image_radius_mm'] * 1000:.0f} µm | magnification {_r['magnification']:.2f} |
-    | **beam waist** | $ = {_r['true_waist_z_mm']:.0f} mm | from $ |
+    | **beam waist** | $z = {_r['true_waist_z_mm']:.0f}$ mm | from $q$ |
     | spot there | {_r['true_waist_radius_mm'] * 1000:.0f} µm | |
 
     Two planes, not one, and they are {_sep:.0f} mm apart. Rays identify the
@@ -120,17 +117,17 @@ def _(focus_result, mo):
     mo.md(rf"""
     ## What the aperture did
 
-    Left is the =0$ section along $; right is the transverse spot at the
+    Left is the $y=0$ section along $z$; right is the transverse spot at the
     brightest plane. A shared colour scale makes brightness comparable. The dashed
-    reference is the unclipped (z)$ and its {_ref['true_waist_radius_mm'] * 1000:.0f} µm waist.
+    reference is the unclipped $w(z)$ and its {_ref['true_waist_radius_mm'] * 1000:.0f} µm waist.
 
-    | aperture $ | radius $ | =a^2/\lambda f$ | transmits | brightest plane | shift |
+    | aperture $D/w_L$ | radius $a$ | $N_F=a^2/(\lambda f)$ | transmits | brightest plane | shift |
     |:--|--:|--:|--:|--:|--:|
     {_table}
 
     Clipping costs power, but it also **walks the waist upstream** and fills the
     spot with rings. {_shift} The controlling quantity is the Fresnel number:
-    \gg1$ leaves the lens in charge, while \lesssim1$ lets diffraction from
+    $N_F\gg1$ leaves the lens in charge, while $N_F\lesssim1$ lets diffraction from
     the hole set the beam. Current finite-aperture values: {_nfs or '—'}.
     """)
     return
@@ -144,7 +141,7 @@ def _(mo):
     ABCD matrices move rays, and a ray is blocked or it is not. A bundle matched to
     the Gaussian has $\sigma_y=w_0/2$ and
     $\sigma_\theta=\lambda/(2\pi w_0)$, so free space gives
-    \sigma_y(z)=w(z)$. Its divergence is diffraction-limited, but it carries no
+    $\sigma_y(z)=w(z)$. Its divergence is diffraction-limited, but it carries no
     **phase**: rays add in intensity and cannot interfere. The independent study
     below puts geometric and wave answers side by side.
     """)
@@ -246,18 +243,19 @@ def _(mo, stop_ray_result):
     _slide = abs(_v["B_field"] / _v["A_pupil"])
     _start = _v["radius_mm"] / abs(_v["A_pupil"]) - _a["radius_mm"]
     _end = _v["radius_mm"] / abs(_v["A_pupil"]) + _a["radius_mm"]
+    _field_limit = _f["radius_mm"] / abs(_f["B_field"])
     mo.md(rf"""
     ### Reading the three panels
 
-    A blocked ray satisfies $|Ap+Bh|>r$: $ is pupil height and $ field height.
+    A blocked ray satisfies $|Ap+Bh|>r$: $p$ is pupil height and $h$ is field height.
 
-    | stop | $ | radius | $ (pupil) | $ (field) | what it is |
+    | stop | $z$ | radius | $A$ (pupil) | $B$ (field) | what it is |
     |:--|--:|--:|--:|--:|:--|
     {_rows}
 
-    - **=0* clips the same cone at every field: an aperture stop.
-    - **=0* passes or kills each field point whole, with a cliff at
-      $\pm mm: a field stop.
+    - **$B=0$** clips the same cone at every field: an aperture stop.
+    - **$A=0$** passes or kills each field point whole, with a cliff at
+      $\pm {_field_limit:.1f}$ mm: a field stop.
     - **Both nonzero** slides the blocked region across the pupil at
       {_slide:.1f} mm/mm. Illumination rolls off from $|h|={_start:.1f}$ mm to
       {_end:.1f} mm.

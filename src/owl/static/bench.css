@@ -6,7 +6,10 @@
     --owl-return: #8741a6;
     --owl-beam: #ad510c;
     box-sizing: border-box;
+    position: relative;
     width: 100%;
+    min-width: 0;
+    overflow: hidden;
     max-width: 900px;
     padding: 16px;
     border: 1px solid var(--owl-line);
@@ -22,6 +25,29 @@
 .owl-bench *::before,
 .owl-bench *::after {
     box-sizing: border-box;
+}
+.owl-bench-drawer {
+    margin-bottom: 10px;
+}
+.owl-bench-drawer > summary {
+    width: fit-content;
+    padding: 5px 8px;
+    border-radius: 4px;
+    color: var(--owl-muted);
+    cursor: pointer;
+    font-weight: 600;
+    user-select: none;
+}
+.owl-bench-drawer > summary:hover {
+    color: var(--owl-ink);
+    background: #f2f5f8;
+}
+.owl-bench-drawer > summary:focus-visible {
+    outline: 2px solid var(--owl-ray);
+    outline-offset: 2px;
+}
+.owl-bench-drawer-body {
+    padding-top: 12px;
 }
 .owl-bench-header {
     display: flex;
@@ -191,90 +217,23 @@
 .owl-bench-error[hidden] {
     display: none;
 }
-.owl-bench svg {
-    display: block;
+.owl-bench-plotly {
     width: 100%;
-    height: auto;
-    overflow: visible;
+    height: 390px;
+    min-width: 0;
+    min-height: 300px;
 }
-.owl-bench svg text {
-    fill: var(--owl-muted);
-    font:
-        11px system-ui,
-        sans-serif;
+.owl-bench-plotly .js-plotly-plot,
+.owl-cross-section-plot.js-plotly-plot {
+    width: 100% !important;
+    max-width: 100%;
 }
-.owl-bench svg :is(line, path, rect) {
-    vector-effect: non-scaling-stroke;
-}
-.owl-bench-grid {
-    stroke: #e6ebf0;
-}
-.owl-bench-axis {
-    stroke: #8493a3;
-}
-.owl-bench-lens {
-    stroke: #748294;
-    stroke-width: 3;
-    opacity: 0.55;
-}
-.owl-bench-mirror {
-    stroke: var(--owl-ink);
-    stroke-width: 4;
-    stroke-dasharray: 8 2;
-}
-.owl-bench-interface {
-    stroke: var(--owl-muted);
-    stroke-width: 2;
-    stroke-dasharray: 3 4;
-}
-.owl-bench-thick-lens {
-    fill: #748294;
-    fill-opacity: 0.12;
-    stroke: var(--owl-muted);
-    stroke-width: 1.5;
-}
-.owl-bench-ray {
-    fill: none;
-    stroke: var(--owl-ray);
-    stroke-width: 1.2;
-    opacity: 0.75;
-}
-.owl-bench-ray-arrow {
-    fill: none;
-    stroke: var(--owl-ray);
-    stroke-width: 1.4;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-}
-.owl-bench-ray-return {
-    stroke: var(--owl-return);
-}
-.owl-bench-return-key {
-    color: var(--owl-return);
-}
-.owl-bench-beam {
-    fill: none;
-    stroke: var(--owl-beam);
-    stroke-width: 2;
-    stroke-dasharray: 6 3;
-}
-.owl-bench-legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 18px;
-}
-.owl-bench-ray-key {
-    color: var(--owl-ray);
-}
-.owl-bench-beam-key {
-    color: var(--owl-beam);
-}
-.owl-bench-pop {
-    image-rendering: pixelated;
-}
-.owl-bench-pop-key {
-    color: #8b3517;
-    font-weight: 600;
+.owl-bench-plotly .plot-container,
+.owl-bench-plotly .svg-container,
+.owl-cross-section-plot.js-plotly-plot .plot-container,
+.owl-cross-section-plot.js-plotly-plot .svg-container {
+    width: 100% !important;
+    max-width: 100%;
 }
 .owl-bench-metrics,
 .owl-cross-section-note {
@@ -294,10 +253,8 @@
     cursor: default;
     border-color: var(--owl-line);
 }
-.owl-bench-aperture {
-    fill: var(--owl-ink);
-}
-.owl-bench > .owl-cross-section {
+
+.owl-bench-drawer-body > .owl-cross-section {
     border: 0;
     border-top: 1px solid var(--owl-line);
     border-radius: 0;
@@ -325,41 +282,14 @@
 }
 .owl-cross-section-plots {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    align-items: center;
-    gap: 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
     margin-top: 12px;
 }
-.owl-cross-section-heatmap {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 6px;
-    margin: 0;
-    min-width: 0;
-    color: var(--owl-muted);
-    font-size: 11px;
-}
-.owl-cross-section canvas {
-    display: block;
+.owl-cross-section-plot {
     width: 100%;
-    aspect-ratio: 1;
-    image-rendering: pixelated;
-    background: #000;
-}
-.owl-cross-section figcaption {
-    grid-column: 2;
-    text-align: center;
-    overflow-wrap: anywhere;
-}
-.owl-cross-section-y-axis {
-    writing-mode: vertical-rl;
-    transform: rotate(180deg);
-    text-align: center;
-}
-.owl-cross-section-slice {
-    fill: none;
-    stroke: var(--owl-ray);
-    stroke-width: 2;
+    min-width: 0;
+    height: 350px;
 }
 .owl-cross-section-warnings {
     padding: 8px 12px 8px 28px;

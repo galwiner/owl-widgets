@@ -1,28 +1,6 @@
 // Rendering and editing only: every optical trace comes from owl.core.
-const NS = "http://www.w3.org/2000/svg";
 const fmt = (value) => String(Number(Number(value).toPrecision(4)));
 const clone = (value) => JSON.parse(JSON.stringify(value));
-let plotId = 0;
-
-function inferno(value) {
-  const stops = [
-    [0, 0, 4],
-    [31, 12, 72],
-    [85, 15, 109],
-    [136, 34, 106],
-    [186, 54, 85],
-    [227, 89, 51],
-    [249, 140, 10],
-    [249, 201, 50],
-    [252, 255, 164],
-  ];
-  const position = Math.max(0, Math.min(1, value)) * (stops.length - 1);
-  const index = Math.min(stops.length - 2, Math.floor(position));
-  const mix = position - index;
-  return stops[index].map((channel, i) =>
-    Math.round(channel + (stops[index + 1][i] - channel) * mix),
-  );
-}
 
 function validLongitudinal(data) {
   return (
@@ -44,14 +22,6 @@ function node(tag, attrs = {}, text = "") {
   element.textContent = text;
   return element;
 }
-function svgNode(tag, attrs = {}, text = "") {
-  const element = document.createElementNS(NS, tag);
-  for (const [key, value] of Object.entries(attrs))
-    element.setAttribute(key, value);
-  element.textContent = text;
-  return element;
-}
-
 export function render({ model, el }) {
   if (model.get("view_kind") === "cross_section") {
     const section = mountCrossSection(el);
@@ -72,6 +42,10 @@ export function render({ model, el }) {
     node("strong", {}, "Optical bench"),
     node("span", {}, "Paraxial optics · input in air · M²=1"),
   );
+  const drawer = node("details", { class: "owl-bench-drawer" });
+  const drawerSummary = node("summary", {}, "Bench setup");
+  const drawerBody = node("div", { class: "owl-bench-drawer-body" });
+  drawer.append(drawerSummary, drawerBody);
   const controls = node("div", { class: "owl-bench-controls" });
   const elements = node("div", { class: "owl-bench-elements" });
   const toolbar = node("div", { class: "owl-bench-toolbar" });
@@ -80,16 +54,13 @@ export function render({ model, el }) {
     role: "alert",
     "aria-live": "polite",
   });
-  const plot = svgNode("svg", {
-    viewBox: "0 0 720 310",
-    role: "img",
-    "aria-label":
-      "Ray heights and Gaussian beam radius along the optical axis, in millimetres",
+  const plot = node("div", {
+    class: "owl-bench-plotly",
+    role: "region",
+    "aria-label": "Optical system ray and intensity plot",
   });
-  const legend = node("div", { class: "owl-bench-legend" });
   const viewControl = node("label", { class: "owl-bench-view" });
   const viewSelect = node("select", { "aria-label": "Trace view" });
-  const clipId = `owl-bench-plot-${++plotId}`;
   let physicalModes = false;
   function setViewOptions(hasPhysical) {
     if (physicalModes === hasPhysical && viewSelect.options.length) return;
@@ -123,24 +94,24 @@ export function render({ model, el }) {
     class: "owl-bench-metrics",
     "aria-live": "polite",
   });
-  root.append(
+  drawerBody.append(
     heading,
     controls,
     elements,
     toolbar,
     error,
     viewControl,
-    plot,
-    legend,
     metrics,
   );
+  root.append(drawer, plot);
   el.append(root);
-  const crossSection = mountCrossSection(root);
+  const crossSection = mountCrossSection(drawerBody);
   let localError = "";
 
   function showError() {
     error.textContent = localError || model.get("error") || "";
     error.hidden = !error.textContent;
+    if (error.textContent) drawer.open = true;
   }
   function update(edit) {
     const settings = clone(model.get("settings"));
@@ -492,389 +463,48 @@ export function render({ model, el }) {
   );
 
   function drawPlot() {
-    const r = model.get("result");
-    crossSection.update(r?.cross_sections);
-    if (!r?.rays || !r?.gaussian) return;
-    const hasPhysical = validLongitudinal(r.longitudinal);
+    const result = model.get("result");
+    if (!result?.rays || !result?.gaussian) return;
+    const hasPhysical = validLongitudinal(result.longitudinal);
     setViewOptions(hasPhysical);
-    const showPhysical =
-      hasPhysical && ["physical", "physical-rays"].includes(viewSelect.value);
-    const showRays = hasPhysical
-      ? ["physical-rays", "rays"].includes(viewSelect.value)
-      : viewSelect.value !== "gaussian";
-    const showGaussian = hasPhysical
-      ? viewSelect.value === "gaussian-reference"
-      : viewSelect.value !== "rays";
-    const hasAperture = r.elements.some((item) => item.type === "aperture");
-    const gaussianLabel = hasAperture
-      ? "Unclipped Gaussian reference"
-      : "Gaussian";
-    const descriptionParts = [];
-    if (showPhysical)
-      descriptionParts.push(
-        "physical-optics intensity relative to input peak on a three-decade logarithmic scale",
+    const mode = viewSelect.value;
+    void renderBenchPlot(plot, result, mode).catch((cause) => {
+      plot.replaceChildren(
+        node("p", { class: "owl-bench-error" }, `Plot error: ${cause.message}`),
       );
-    if (showRays)
-      descriptionParts.push(
-        "blue right-travelling and purple left-travelling rays with direction arrows",
-      );
-    if (showGaussian)
-      descriptionParts.push(
-        `orange ${gaussianLabel} intensity 1/e² radius (±w)`,
-      );
-    const description = `${descriptionParts.join(" and ")}; physical x-z coordinates in millimetres.`;
-    plot.setAttribute("aria-label", description);
-    plot.replaceChildren(svgNode("title", {}, description));
-    legend.replaceChildren();
-    if (showPhysical)
-      legend.append(
-        node(
-          "span",
-          { class: "owl-bench-pop-key" },
-          "Physical optics |U|² / input peak · log scale",
-        ),
-      );
-    if (showRays) {
-      legend.append(
-        node("span", { class: "owl-bench-ray-key" }, "→ Rays: right"),
-      );
-      if (r.rays.z_mm.some((z, i, zs) => i > 0 && z < zs[i - 1]))
-        legend.append(
-          node("span", { class: "owl-bench-return-key" }, "← Rays: left"),
-        );
-    }
-    if (showGaussian)
-      legend.append(
-        node(
-          "span",
-          { class: "owl-bench-beam-key" },
-          `┄ ${gaussianLabel} intensity 1/e² radius (±w)`,
-        ),
-      );
-    const left = 66,
-      right = 700,
-      top = 26,
-      bottom = 262;
-    let minZ = 0,
-      maxZ = 0;
-    for (const zs of [
-      r.rays.z_mm,
-      r.gaussian.z_mm,
-      ...(hasPhysical ? [r.longitudinal.z_mm] : []),
-    ])
-      for (const z of zs) {
-        minZ = Math.min(minZ, z);
-        maxZ = Math.max(maxZ, z);
-      }
-    for (const item of r.elements) {
-      minZ = Math.min(minZ, item.start_z_mm ?? item.z_mm, item.z_mm);
-      maxZ = Math.max(maxZ, item.start_z_mm ?? item.z_mm, item.z_mm);
-    }
-    if (minZ === maxZ) {
-      minZ -= 0.5;
-      maxZ += 0.5;
-    }
-    const zScale = Math.max(Math.abs(minZ), Math.abs(maxZ));
-    const zMin = minZ / zScale,
-      zMax = maxZ / zScale;
-    let extent = 0.001;
-    if (showRays)
-      for (const [sample, row] of r.rays.y_mm.entries())
-        for (const [ray, height] of row.entries())
-          if (sample === 0 || r.rays.alive?.[sample - 1]?.[ray] !== false)
-            extent = Math.max(extent, Math.abs(height));
-    for (const item of r.elements)
-      if (item.type === "aperture")
-        extent = Math.max(extent, Math.abs(item.y_mm ?? 0) + item.radius_mm);
-    if (showGaussian)
-      for (const y of r.gaussian.radius_mm) extent = Math.max(extent, y);
-    let minHeight = -extent,
-      maxHeight = extent;
-    if (showPhysical) {
-      minHeight = Math.min(...r.longitudinal.x_mm);
-      maxHeight = Math.max(...r.longitudinal.x_mm);
-      if (minHeight === maxHeight) {
-        const halfWindow = (r.longitudinal.window_mm || 1) / 2;
-        minHeight -= halfWindow;
-        maxHeight += halfWindow;
-      }
-    }
-    // Normalize before multiplying so finite physical values stay finite in SVG.
-    const x = (z) =>
-      left + ((z / zScale - zMin) / (zMax - zMin)) * (right - left);
-    const y = showPhysical
-      ? (height) =>
-          bottom -
-          ((height - minHeight) / (maxHeight - minHeight)) * (bottom - top)
-      : (height) =>
-          (top + bottom) / 2 - ((height / extent) * (bottom - top)) / 2 / 1.12;
-    if (showPhysical) {
-      const width = Math.round(right - left);
-      const height = r.longitudinal.x_mm.length;
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext("2d");
-      context.fillStyle = "rgb(0, 0, 4)";
-      context.fillRect(0, 0, width, height);
-      for (let sample = 0; sample < r.longitudinal.z_mm.length; sample++) {
-        const z0 = r.longitudinal.z_mm[sample];
-        const z1 =
-          r.longitudinal.z_mm[sample + 1] ??
-          (sample ? z0 + (z0 - r.longitudinal.z_mm[sample - 1]) : maxZ);
-        const start = Math.max(
-          0,
-          Math.min(
-            width,
-            Math.floor(((Math.min(z0, z1) - minZ) / (maxZ - minZ)) * width),
-          ),
-        );
-        const end = Math.max(
-          start + 1,
-          Math.min(
-            width,
-            Math.ceil(((Math.max(z0, z1) - minZ) / (maxZ - minZ)) * width),
-          ),
-        );
-        const row = r.longitudinal.intensity[sample];
-        for (let transverse = 0; transverse < height; transverse++) {
-          const intensity = Number.isFinite(row[transverse])
-            ? Math.max(0, row[transverse])
-            : 0;
-          const level =
-            intensity > 0
-              ? Math.max(0, Math.min(1, (Math.log10(intensity) + 3) / 3))
-              : 0;
-          context.fillStyle = `rgb(${inferno(level).join(",")})`;
-          context.fillRect(start, height - 1 - transverse, end - start, 1);
-        }
-      }
-      const defs = svgNode("defs");
-      const clip = svgNode("clipPath", { id: clipId });
-      clip.append(
-        svgNode("rect", {
-          x: left,
-          y: top,
-          width: right - left,
-          height: bottom - top,
-        }),
-      );
-      defs.append(clip);
-      plot.append(defs);
-      const image = svgNode("image", {
-        class: "owl-bench-pop",
-        href: canvas.toDataURL(),
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top,
-        preserveAspectRatio: "none",
-        "clip-path": `url(#${clipId})`,
-      });
-      image.append(
-        svgNode(
-          "title",
-          {},
-          `Physical optics |U|² / input peak; log scale from 10⁻³ to 1; x ${fmt(minHeight)} to ${fmt(maxHeight)} mm`,
-        ),
-      );
-      plot.append(image);
-    }
-    for (let tick = 0; tick <= 4; tick++) {
-      const z = minZ * (1 - tick / 4) + maxZ * (tick / 4);
-      plot.append(
-        svgNode("line", {
-          x1: x(z),
-          x2: x(z),
-          y1: top,
-          y2: bottom,
-          class: "owl-bench-grid",
-        }),
-      );
-      plot.append(
-        svgNode(
-          "text",
-          {
-            x: x(z),
-            y: bottom + 20,
-            "text-anchor": tick === 4 ? "end" : "middle",
-          },
-          fmt(z),
-        ),
-      );
-    }
-    const heightTicks = showPhysical
-      ? [minHeight, (minHeight + maxHeight) / 2, maxHeight]
-      : [-extent, 0, extent];
-    for (const height of heightTicks) {
-      plot.append(
-        svgNode("line", {
-          x1: left,
-          x2: right,
-          y1: y(height),
-          y2: y(height),
-          class: Math.abs(height) < 1e-12 ? "owl-bench-axis" : "owl-bench-grid",
-        }),
-      );
-      plot.append(
-        svgNode(
-          "text",
-          { x: left - 8, y: y(height) + 4, "text-anchor": "end" },
-          fmt(height),
-        ),
-      );
-    }
-    plot.append(
-      svgNode(
-        "text",
-        { x: left, y: 15 },
-        showPhysical ? "x (mm)" : "height (mm)",
-      ),
-      svgNode(
-        "text",
-        { x: (left + right) / 2, y: 303, "text-anchor": "middle" },
-        "z (mm)",
-      ),
-    );
-    for (const item of r.elements) {
-      if (item.type === "aperture") {
-        const offsetX = item.x_mm ?? 0;
-        const offsetY = item.y_mm ?? 0;
-        // Intersect the circular clear opening with the meridional x=0 plane.
-        const halfOpening =
-          Math.abs(offsetX) < item.radius_mm
-            ? item.radius_mm * Math.sqrt(1 - (offsetX / item.radius_mm) ** 2)
-            : 0;
-        const upper = Math.max(top, Math.min(bottom, y(offsetY + halfOpening)));
-        const lower = Math.max(top, Math.min(bottom, y(offsetY - halfOpening)));
-        for (const [barTop, barBottom] of [
-          [top, upper],
-          [lower, bottom],
-        ]) {
-          const bar = svgNode("rect", {
-            x: x(item.z_mm) - 3,
-            y: barTop,
-            width: 6,
-            height: barBottom - barTop,
-            class: "owl-bench-aperture",
-          });
-          bar.append(
-            svgNode(
-              "title",
-              {},
-              `${item.label ?? "Aperture"}: meridional x=0${halfOpening ? "" : "; no clear opening"}`,
-            ),
-          );
-          plot.append(bar);
-        }
-        continue;
-      }
-      const classes = {
-        thin_lens: "owl-bench-lens",
-        mirror: "owl-bench-mirror",
-        interface: "owl-bench-interface",
-        thick_lens: "owl-bench-thick-lens",
-      };
-      if (!classes[item.type]) continue;
-      const start = x(item.start_z_mm ?? item.z_mm),
-        end = x(item.z_mm);
-      const lens =
-        item.type === "thick_lens"
-          ? svgNode("rect", {
-              x: Math.min(start, end),
-              y: top,
-              width: Math.abs(end - start),
-              height: bottom - top,
-              class: classes[item.type],
-            })
-          : svgNode("line", {
-              x1: end,
-              x2: end,
-              y1: top,
-              y2: bottom,
-              class: classes[item.type],
-            });
-      lens.append(svgNode("title", {}, item.label));
-      plot.append(lens);
-    }
-    const path = (zs, heights, className) => {
-      const d = zs
-        .map((z, i) => `${i ? "L" : "M"}${x(z)},${y(heights[i])}`)
-        .join(" ");
-      plot.append(svgNode("path", { d, class: className }));
-    };
-    if (showRays) {
-      for (let ray = 0; ray < (r.rays.y_mm[0]?.length ?? 0); ray++) {
-        for (let i = 1; i < r.rays.z_mm.length; i++) {
-          // Keep the segment arriving at the stop; omit travel after interception.
-          if (r.rays.alive?.[i - 1]?.[ray] === false) break;
-          const z0 = r.rays.z_mm[i - 1],
-            z1 = r.rays.z_mm[i];
-          // Interfaces change angle at a single plane, not travel direction.
-          if (z0 === z1) continue;
-          const returning = z1 < z0;
-          const direction = returning ? "left" : "right";
-          const className = `owl-bench-ray${returning ? " owl-bench-ray-return" : ""}`;
-          const x0 = x(z0),
-            y0 = y(r.rays.y_mm[i - 1][ray]);
-          const x1 = x(z1),
-            y1 = y(r.rays.y_mm[i][ray]);
-          plot.append(
-            svgNode("path", {
-              d: `M${x0},${y0} L${x1},${y1}`,
-              class: className,
-              "data-direction": direction,
-            }),
-          );
-          const dx = x1 - x0,
-            dy = y1 - y0;
-          const length = Math.hypot(dx, dy);
-          if (length < 16) continue;
-          const ux = dx / length,
-            uy = dy / length;
-          // Offset from centre so retraced forward/return arrows remain distinct.
-          const cx = x0 + 0.6 * dx,
-            cy = y0 + 0.6 * dy;
-          plot.append(
-            svgNode("path", {
-              d: `M${cx - 3 * ux - 2.5 * uy},${cy - 3 * uy + 2.5 * ux} L${cx + 3 * ux},${cy + 3 * uy} L${cx - 3 * ux + 2.5 * uy},${cy - 3 * uy - 2.5 * ux}`,
-              class: `owl-bench-ray-arrow${returning ? " owl-bench-ray-return" : ""}`,
-              "data-direction": direction,
-              "aria-hidden": "true",
-            }),
-          );
-        }
-      }
-    }
-    if (showGaussian)
-      for (const sign of [-1, 1])
-        path(
-          r.gaussian.z_mm,
-          r.gaussian.radius_mm.map((v) => sign * v),
-          "owl-bench-beam",
-        );
+    });
     metrics.textContent = [
-      `Length ${fmt(r.metrics.length_mm)} mm`,
-      ...(showGaussian
+      `Length ${fmt(result.metrics.length_mm)} mm`,
+      ...(mode === "gaussian-reference" ||
+      mode === "gaussian" ||
+      mode === "both"
         ? [
-            `${hasAperture ? "Unclipped Gaussian reference output radius" : "Output Gaussian radius"} ${fmt(r.metrics.output_radius_mm)} mm`,
+            `${result.elements.some((item) => item.type === "aperture") ? "Unclipped Gaussian reference" : "Gaussian"} output radius ${fmt(result.metrics.output_radius_mm)} mm`,
           ]
         : []),
-      ...(showRays
-        ? [`Output ray half-span ${fmt(r.metrics.output_ray_half_span_mm)} mm`]
+      ...(["physical-rays", "rays", "both"].includes(mode)
+        ? [
+            `Output ray half-span ${fmt(result.metrics.output_ray_half_span_mm)} mm`,
+          ]
         : []),
     ].join(" · ");
   }
+  const refreshCrossSection = () =>
+    crossSection.update(model.get("result")?.cross_sections);
   model.on("change:settings", drawControls);
   model.on("change:result", drawPlot);
+  model.on("change:result", refreshCrossSection);
   model.on("change:error", showError);
   drawControls();
   drawPlot();
+  refreshCrossSection();
   showError();
   return () => {
     model.off("change:settings", drawControls);
     model.off("change:result", drawPlot);
+    model.off("change:result", refreshCrossSection);
     model.off("change:error", showError);
+
     crossSection.destroy();
     root.remove();
   };
@@ -899,7 +529,7 @@ export function mountCrossSection(container) {
   const note = node(
     "p",
     { class: "owl-cross-section-note" },
-    "Intensity / input peak · fixed heatmap scale 0–1 (values above 1 saturate). Center slice at y ≈ 0 mm.",
+    "Intensity / input peak · heatmap values above 1 saturate. Hover for local intensity; use the mode bar to zoom, pan, or reset.",
   );
   const empty = node(
     "p",
@@ -907,19 +537,17 @@ export function mountCrossSection(container) {
     "Cross-section data not available yet.",
   );
   const plots = node("div", { class: "owl-cross-section-plots" });
-  const heatmap = node("figure", { class: "owl-cross-section-heatmap" });
-  const canvas = node("canvas", {
-    role: "img",
+  const heatHost = node("div", {
+    class: "owl-cross-section-plot",
+    role: "region",
     "aria-label": "Transverse intensity heatmap",
   });
-  const xAxis = node("figcaption");
-  const yAxis = node("span", { class: "owl-cross-section-y-axis" });
-  heatmap.append(yAxis, canvas, xAxis);
-  const slice = svgNode("svg", {
-    viewBox: "0 0 360 250",
-    role: "img",
+  const sliceHost = node("div", {
+    class: "owl-cross-section-plot",
+    role: "region",
     "aria-label": "Center intensity slice",
   });
+  plots.append(heatHost, sliceHost);
   const warnings = node("ul", {
     class: "owl-cross-section-warnings",
     "aria-live": "polite",
@@ -941,116 +569,32 @@ export function mountCrossSection(container) {
       values.every((row) => Array.isArray(row) && row.length === xs.length);
     empty.hidden = !!available;
     note.hidden = !available;
+    plots.hidden = !available;
     transmission.textContent =
       plane && Number.isFinite(plane.transmission)
         ? `Transmission ${(100 * plane.transmission).toFixed(1)}%`
         : "";
-    plots.replaceChildren();
-    warnings.replaceChildren();
-    for (const warning of data?.warnings ?? [])
-      warnings.append(node("li", {}, warning));
+    warnings.replaceChildren(
+      ...(data?.warnings ?? []).map((warning) => node("li", {}, warning)),
+    );
     warnings.hidden = !warnings.childElementCount;
-    if (!available) return;
-    plots.append(heatmap, slice);
-    const size = xs.length;
-    canvas.width = canvas.height = size;
-    const context = canvas.getContext("2d");
-    const image = context.createImageData(size, size);
-    for (let row = 0; row < size; row++) {
-      for (let col = 0; col < size; col++) {
-        // Backend values already use the input peak. Never rescale by this plane.
-        const intensity = Number.isFinite(values[row][col])
-          ? values[row][col]
-          : 0;
-        const v = Math.max(0, Math.min(1, intensity));
-        const pixel = 4 * ((size - 1 - row) * size + col);
-        image.data.set(
-          [Math.round(255 * v), Math.round(205 * v), Math.round(80 * v), 255],
-          pixel,
+    if (available) {
+      void renderCrossSectionPlots(
+        heatHost,
+        sliceHost,
+        data,
+        plane,
+        selected,
+      ).catch((cause) => {
+        plots.replaceChildren(
+          node(
+            "p",
+            { class: "owl-bench-error" },
+            `Plot error: ${cause.message}`,
+          ),
         );
-      }
+      });
     }
-    context.putImageData(image, 0, 0);
-    const bounds = `${fmt(xs[0])} … ${fmt(xs[size - 1])}`;
-    xAxis.textContent = `x (mm): ${bounds}`;
-    yAxis.textContent = `y (mm): ${bounds}`;
-    canvas.setAttribute(
-      "aria-label",
-      `${plane.label}, z = ${fmt(plane.z_mm)} mm: intensity heatmap, x and y ${bounds} mm; fixed input peak scale 0 to 1. ${transmission.textContent}`,
-    );
-    let center = 0;
-    xs.forEach((value, i) => {
-      if (Math.abs(value) < Math.abs(xs[center])) center = i;
-    });
-    // Share the slice's vertical scale across all planes, including focused peaks >1.
-    let peak = 1;
-    for (const entry of planes)
-      for (const value of entry.intensity?.[center] ?? [])
-        if (Number.isFinite(value)) peak = Math.max(peak, value);
-    const left = 48,
-      right = 344,
-      top = 30,
-      bottom = 202;
-    const minX = size > 1 ? xs[0] : xs[0] - (data.window_mm || 1) / 2;
-    const maxX = size > 1 ? xs[size - 1] : xs[0] + (data.window_mm || 1) / 2;
-    const x = (v) => left + ((v - minX) / (maxX - minX)) * (right - left);
-    const y = (v) => bottom - (Math.max(0, v) / peak) * (bottom - top);
-    slice.replaceChildren(
-      svgNode(
-        "title",
-        {},
-        `Center slice at y = ${fmt(xs[center])} mm; intensity relative to input peak`,
-      ),
-    );
-    for (const v of [0, peak / 2, peak]) {
-      slice.append(
-        svgNode("line", {
-          x1: left,
-          x2: right,
-          y1: y(v),
-          y2: y(v),
-          class: "owl-bench-grid",
-        }),
-        svgNode(
-          "text",
-          { x: left - 6, y: y(v) + 4, "text-anchor": "end" },
-          fmt(v),
-        ),
-      );
-    }
-    for (const v of [minX, (minX + maxX) / 2, maxX])
-      slice.append(
-        svgNode(
-          "text",
-          {
-            x: x(v),
-            y: bottom + 18,
-            "text-anchor": v === maxX ? "end" : "start",
-          },
-          fmt(v),
-        ),
-      );
-    slice.append(
-      svgNode(
-        "text",
-        { x: left, y: 16 },
-        `I / input peak · y = ${fmt(xs[center])} mm`,
-      ),
-      svgNode(
-        "text",
-        { x: (left + right) / 2, y: 244, "text-anchor": "middle" },
-        "x (mm)",
-      ),
-      svgNode("path", {
-        class: "owl-cross-section-slice",
-        d: xs
-          .map(
-            (v, i) =>
-              `${i ? "L" : "M"}${x(v)},${y(Number.isFinite(values[center][i]) ? values[center][i] : 0)}`,
-          )
-          .join(" "),
-      }),
-    );
   }
   function choose() {
     selected = select.selectedIndex;
@@ -1073,7 +617,6 @@ export function mountCrossSection(container) {
         ),
       );
       select.selectedIndex = planes.length ? selected : -1;
-      // Older Bench fixtures have no cross sections, but still show an empty panel.
       if (planes.length) {
         if (planeLabel.parentNode !== header)
           header.insertBefore(planeLabel, transmission);
@@ -1083,6 +626,8 @@ export function mountCrossSection(container) {
     destroy() {
       disposed = true;
       select.removeEventListener("change", choose);
+      Plotly.purge(heatHost);
+      Plotly.purge(sliceHost);
       data = null;
       root.remove();
     },

@@ -17,7 +17,7 @@ class CrossSection(anywidget.AnyWidget):
     Call close() when discarding a view to detach its observer.
     """
 
-    _esm = Path(__file__).parent / "static" / "bench.js"
+    _esm = Bench._esm
     _css = Path(__file__).parent / "static" / "bench.css"
     view_kind = traitlets.Unicode("cross_section").tag(sync=True)
     result = traitlets.Dict().tag(sync=True)

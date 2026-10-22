@@ -4,21 +4,37 @@ Small, inspectable optics experiments in Python notebooks. Built on anywidget; i
 
 **Supported models:** free space, ideal thin lenses, flat/curved refractive interfaces, flat/curved mirrors, thick lenses in air, circular hard apertures, paraxial rays, ideal Gaussian references, and scalar paraxial FFT diffraction. `Bench` supports all these elements, tunes wavelength/waist and wave sampling, and defaults to clipped rays over the x–z physical-intensity center cut. The trace selector also offers physical optics alone, rays alone, and the unclipped Gaussian reference; the transverse cross-section panel remains plane-selectable. Calculations live in Python, not duplicated in JavaScript.
 
-## Run the notebook
+## Install
+
+OWL requires Python 3.12 or newer.
+
+```sh
+pip install owl-widgets
+```
+
+Or with uv:
+
+```sh
+uv add owl-widgets
+```
+
+The distribution name is `owl-widgets`; the Python import is `owl`. Runtime JavaScript and CSS, including Plotly.js, ship in the wheel for offline use.
+
+## Run the notebooks
 
 From this checkout's `optics` directory:
 
 ```sh
 uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/optics_basics.py
 uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/apertures.py
+uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/keplerian_telescope.py
 ```
 
-The notebook declares all its dependencies inline (PEP 723). Its `[tool.uv.sources]` entry resolves OWL from `..`, relative to the notebook, as an editable local package. No global installation or `sys.path` modifications are needed. Keep the checkout together: the notebook alone is **not** portable until OWL is published or its source points at an accessible pinned distribution.
-
-After changing OWL's source, pass `--reinstall-package owl-widgets` so the sandbox rebuilds the local wheel; `--refresh-package` alone leaves an already-installed build in place.
+Each notebook declares all dependencies inline (PEP 723) and pins `owl-widgets==0.1.1` from PyPI. No global installation, local checkout, or `sys.path` modification is needed.
 
 - `optics_basics.py`: free propagation, thin lenses, ray focus versus Gaussian waist, wavelength tuning, mirrors, interfaces, and thick lenses.
 - `apertures.py`: controlled Fresnel aperture sweeps, brightest-plane spots, launch-height-colored ray/wave comparisons, stop taxonomy, field-height-colored ray fans, relative illumination, and cat’s-eye pupil maps.
+- `keplerian_telescope.py`: contrasts a two-positive-lens ray-optical afocal spacing ($f_{obj} + f_{eye}$) with the spacing that minimizes Gaussian-beam divergence.
 
 Each experiment owns independent inputs. Study controls update their plots and the notebook's downstream tables and narrative together.
 
@@ -152,12 +168,15 @@ Systems list elements in **encounter order**, not sorted laboratory z. Mirrors r
 
 ## Develop and validate
 
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, testing, and pull-request guidance. The main validation commands are:
+
 ```sh
 uv run --no-project --refresh-package owl-widgets --with . --with pytest pytest tests
-uvx --from marimo==0.24.0 marimo check --strict notebooks/optics_basics.py notebooks/apertures.py
+uvx --from marimo==0.25.1 marimo check --strict notebooks/optics_basics.py notebooks/apertures.py notebooks/keplerian_telescope.py
 
-uvx --from marimo==0.24.0 marimo export html --sandbox notebooks/optics_basics.py -o /tmp/owl-optics-basics.html
-uvx --from marimo==0.24.0 marimo export html --sandbox notebooks/apertures.py -o /tmp/owl-apertures.html
+uvx --from marimo==0.25.1 marimo export html --sandbox notebooks/optics_basics.py -o /tmp/owl-optics-basics.html
+uvx --from marimo==0.25.1 marimo export html --sandbox notebooks/apertures.py -o /tmp/owl-apertures.html
+uvx --from marimo==0.25.1 marimo export html --sandbox notebooks/keplerian_telescope.py -o /tmp/owl-keplerian-telescope.html
 
 uv build
 ```
@@ -172,8 +191,12 @@ npm exec --yes --package=@playwright/test -- node --test tests/test_studies_fron
 
 Browser tests exercise the real renderer with a model double, not a live marimo kernel. Python tests cover propagation and widget updates separately. Static HTML export runs the notebook but is not a substitute for a live kernel for Python-backed controls.
 
+## Community and security
+
+Contributions are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md). Report suspected vulnerabilities privately according to [`SECURITY.md`](SECURITY.md), not through a public issue. OWL is available under the [MIT License](LICENSE), with bundled dependency notices in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
 ## Publication
 
-Distribution name: `owl-widgets`; Python import: `owl`; working version: `0.1.0`. Licensed under the MIT License; see `LICENSE`.
+Distribution name: `owl-widgets`; Python import: `owl`; working version: `0.1.1`. Licensed under the MIT License; see `LICENSE`.
 
-**Not published.** Package-name availability has not been checked. Before release: confirm the distribution name, add project/author URLs, and test a live notebook round trip. Once a release exists, replace the inline local source with the pinned published dependency. Existing `abcd/` notebooks are unchanged.
+Version `0.1.1` is published at [PyPI](https://pypi.org/project/owl-widgets/0.1.1/). The example notebooks pin that release in their inline PEP 723 dependencies. Existing `abcd/` notebooks are unchanged.

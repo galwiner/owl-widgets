@@ -6,14 +6,29 @@ from importlib.resources import files
 
 import numpy as np
 import pytest
-from owl.bench import Bench
-from owl import Interface, Mirror, ThickLens
+from owl import Aperture, Interface, Mirror, ThickLens
+from owl.bench import Bench, _cached_calculate
 from owl.core import FreeSpace, GaussianBeam, OpticalSystem, ThinLens
 
 
 @pytest.fixture
 def system():
     return OpticalSystem((FreeSpace(100), ThinLens(75), FreeSpace(150)))
+
+
+def test_calculation_cache_reuses_data_without_reusing_widget_models(system):
+    _cached_calculate.cache_clear()
+    first = Bench(system)
+    second = Bench(system)
+    try:
+        assert _cached_calculate.cache_info().hits == 1
+        assert first.model_id != second.model_id
+        assert first.result == second.result
+        first.result["metrics"]["length_mm"] = -1
+        assert second.result["metrics"]["length_mm"] != -1
+    finally:
+        first.close()
+        second.close()
 
 
 @pytest.fixture
@@ -171,6 +186,25 @@ def test_invalid_constructor_raises_value_error(system, kwargs):
         Bench(**{"system": system, **kwargs})
 
 
+def test_returning_rays_are_clipped_by_apertures_in_encounter_order():
+    system = OpticalSystem((Mirror(), FreeSpace(10), Aperture(0.5), FreeSpace(5)))
+    widget = Bench(system, ray_span_mm=1, ray_count=5, grid_size=64, window_mm=2)
+    try:
+        rays = widget.result["rays"]
+        assert rays["z_mm"] == [0, 0, -10, -10, -15]
+        assert rays["alive"] == [
+            [True, True, True, True, True],
+            [True, True, True, True, True],
+            [True, True, True, True, True],
+            [False, True, True, True, False],
+            [False, True, True, True, False],
+        ]
+        assert widget.result["metrics"]["output_ray_count"] == 3
+        assert widget.result["gaussian"]["aperture_stop_index"] == 82
+    finally:
+        widget.close()
+
+
 def test_new_elements_positions_after_internal_and_reflected_travel():
     system = OpticalSystem((
         FreeSpace(20), ThickLens(60, -60, 10, 1.5),
@@ -235,5 +269,10 @@ def test_installed_assets_are_local_and_complete(bench):
     assert "https://" not in js
     assert ".owl-bench" in css
     assert "focus-visible" in css
-    assert bench.get_state()["_esm"] == js
+    bundle = bench.get_state()["_esm"]
+    assert js in bundle
+    assert static.joinpath("plotly_views.js").read_text() in bundle
+    assert static.joinpath("plotly.min.js").read_text() in bundle
+    assert "focus-visible" in css
+    assert "MIT License" in static.joinpath("PLOTLY-LICENSE.txt").read_text()
     assert bench.get_state()["_css"] == css

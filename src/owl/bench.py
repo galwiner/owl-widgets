@@ -1,6 +1,8 @@
 """Notebook optical bench; Python owns validation and all propagation."""
 
+import pickle
 from copy import deepcopy
+from functools import lru_cache
 from numbers import Real
 from pathlib import Path
 from typing import Any
@@ -10,7 +12,16 @@ import numpy as np
 import traitlets
 
 from .core import Aperture, FreeSpace, GaussianBeam, Interface, Mirror, OpticalSystem, ThickLens, ThinLens
+from .frontend import _WIDGET_ESM
 from .wave import cross_sections, longitudinal_section
+
+
+_GAUSSIAN_SAMPLES_PER_GAP = 80
+
+
+@lru_cache(maxsize=64)
+def _cached_calculate(payload: bytes) -> tuple[dict[str, Any], dict[str, Any]]:
+    return Bench._calculate(pickle.loads(payload))
 
 
 class Bench(anywidget.AnyWidget):
@@ -31,7 +42,7 @@ class Bench(anywidget.AnyWidget):
     sampling warnings. Saved settings include the wave sampling configuration.
     """
 
-    _esm = Path(__file__).parent / "static" / "bench.js"
+    _esm = _WIDGET_ESM
     _css = Path(__file__).parent / "static" / "bench.css"
 
     view_kind = traitlets.Unicode("bench").tag(sync=True)
@@ -63,11 +74,25 @@ class Bench(anywidget.AnyWidget):
         super().__init__(settings=settings, result=result)
         self._updating = False
 
+    @classmethod
+    def _from_derived(
+        cls, settings: dict[str, Any], result: dict[str, Any]
+    ) -> "Bench":
+        """Create a fresh widget model from trusted, precomputed data."""
+        widget = cls.__new__(cls)
+        widget._updating = True
+        widget._valid_settings = deepcopy(settings)
+        anywidget.AnyWidget.__init__(
+            widget, settings=deepcopy(settings), result=deepcopy(result)
+        )
+        widget._updating = False
+        return widget
+
     @staticmethod
     def _derive(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         try:
             with np.errstate(over="raise", invalid="raise", divide="raise"):
-                return Bench._calculate(data)
+                return deepcopy(_cached_calculate(pickle.dumps(data)))
         except (TypeError, ArithmeticError) as exc:
             raise ValueError(f"Invalid optical parameters: {exc}") from exc
 
@@ -104,11 +129,13 @@ class Bench(anywidget.AnyWidget):
                 # Scale a unit fan instead of subtracting potentially huge endpoints.
                 heights = np.linspace(-1.0, 1.0, count) * span if count > 1 else np.zeros(1)
                 rays = system.trace(np.vstack((heights, np.zeros(count))))
-                gaussian = system.gaussian(beam)
+                gaussian = system.gaussian(beam, samples_per_gap=_GAUSSIAN_SAMPLES_PER_GAP)
         except ArithmeticError as exc:
             raise ValueError("Propagation failed; check the optical parameters") from exc
         elements = []
         sample = 0
+        gaussian_sample = 0
+        aperture_stop_index = None
         for index, element in enumerate(system.elements, start=1):
             start_z = float(rays.z_mm[sample])
             # A thick lens contributes entry, internal gap, and exit samples.
@@ -129,6 +156,14 @@ class Bench(anywidget.AnyWidget):
                 **element.to_dict(), "start_z_mm": start_z,
                 "z_mm": float(rays.z_mm[sample]), "label": label,
             })
+            if isinstance(element, Aperture) and aperture_stop_index is None:
+                aperture_stop_index = gaussian_sample + 1
+            if isinstance(element, FreeSpace):
+                gaussian_sample += _GAUSSIAN_SAMPLES_PER_GAP if element.distance_mm else 1
+            elif isinstance(element, ThickLens):
+                gaussian_sample += (_GAUSSIAN_SAMPLES_PER_GAP + 2) if element.thickness_mm else 3
+            else:
+                gaussian_sample += 1
         settings = {
             "system": system.to_dict(),
             "beam": beam.to_dict(),
@@ -154,6 +189,7 @@ class Bench(anywidget.AnyWidget):
             "gaussian": {
                 "z_mm": gaussian.z_mm.tolist(),
                 "radius_mm": gaussian.radius_mm.tolist(),
+                "aperture_stop_index": aperture_stop_index,
             },
             "elements": elements,
             "metrics": {

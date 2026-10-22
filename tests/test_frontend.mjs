@@ -27,6 +27,14 @@ function loadPlaywright() {
   );
 }
 const { chromium } = loadPlaywright();
+const plotly = await readFile(
+  new URL("../src/owl/static/plotly.min.js", import.meta.url),
+  "utf8",
+);
+const plotlyViews = await readFile(
+  new URL("../src/owl/static/plotly_views.js", import.meta.url),
+  "utf8",
+);
 const js = await readFile(
   new URL("../src/owl/static/bench.js", import.meta.url),
   "utf8",
@@ -46,19 +54,23 @@ beforeEach(async () => {
   page = await browser.newPage({ viewport: { width: 900, height: 900 } });
   await page.setContent('<main><div id="a"></div><div id="b"></div></main>');
   await page.addStyleTag({ content: css });
+  await page.addScriptTag({ content: plotly });
   // AnyWidget loads ESM from a blob: exercise the default export with no base URL.
-  await page.evaluate(async (source) => {
-    const url = URL.createObjectURL(
-      new Blob([source], { type: "text/javascript" }),
-    );
-    try {
-      const module = await import(url);
-      window.renderBench = module.default.render;
-      window.mountCrossSection = module.mountCrossSection;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }, js);
+  await page.evaluate(
+    async ([views, source]) => {
+      const url = URL.createObjectURL(
+        new Blob([views, "\n", source], { type: "text/javascript" }),
+      );
+      try {
+        const module = await import(url);
+        window.renderBench = module.default.render;
+        window.mountCrossSection = module.mountCrossSection;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    },
+    [plotlyViews, js],
+  );
   await page.waitForFunction(() => typeof window.renderBench === "function");
   await page.evaluate(() => {
     // A minimal AnyWidget model double; numerical traces are supplied fixtures,
@@ -124,6 +136,9 @@ beforeEach(async () => {
         cleanup: window.renderBench({ model, el: document.getElementById(id) }),
       };
     });
+    document.querySelectorAll(".owl-bench-drawer").forEach((drawer) => {
+      drawer.open = true;
+    });
   });
 });
 afterEach(async () => {
@@ -138,6 +153,25 @@ const state = () =>
   }));
 
 // Use real browser pointer events: scrubbing must not invoke Python on every move.
+test("bench details are folded by default and keyboard-expandable", async () => {
+  await page.evaluate(() => {
+    benches[0].cleanup();
+    benches[0].cleanup = window.renderBench({
+      model: benches[0].model,
+      el: document.getElementById("a"),
+    });
+  });
+  const drawer = first().locator(".owl-bench-drawer");
+  const summary = drawer.locator("summary");
+  assert.equal(await drawer.getAttribute("open"), null);
+  assert.equal(await first().locator(".owl-bench-plotly").isVisible(), true);
+  assert.equal(await first().locator(".owl-bench-controls").isVisible(), false);
+  await summary.focus();
+  await summary.press("Enter");
+  assert.equal(await drawer.getAttribute("open"), "");
+  assert.equal(await first().locator(".owl-bench-controls").isVisible(), true);
+});
+
 test("paired sliders preview locally, commit on release, and keep focus", async () => {
   for (const [key, min, max, unit, property] of [
     ["wavelength", "200", "2000", "nm", "wavelength_nm"],
@@ -272,7 +306,7 @@ test("backend reset and rollback refresh numeric fields, sliders and errors", as
   assert.equal(await first().locator('[role="alert"]').isVisible(), false);
 });
 
-test("reflected ray segments change color and arrows follow travel through repeated mirrors", async () => {
+test("Plotly separates forward and returning ray segments", async () => {
   await page.evaluate(() => {
     const model = benches[0].model;
     const result = structuredClone(model.get("result"));
@@ -282,66 +316,75 @@ test("reflected ray segments change color and arrows follow travel through repea
     };
     model.set("result", result);
   });
-  const rays = first().locator(".owl-bench-ray");
-  assert.equal(await rays.count(), 3);
+  const graph = first().locator(".owl-bench-plotly");
+  await page.waitForFunction(
+    () => document.querySelector(".owl-bench-plotly")?.data?.length,
+  );
+  const traces = await graph.evaluate((el) =>
+    el.data
+      .filter((trace) => ["Rays", "Returning rays"].includes(trace.name))
+      .map((trace) => ({
+        name: trace.name,
+        x: trace.x,
+        color: trace.line.color,
+      })),
+  );
   assert.deepEqual(
-    await rays.evaluateAll((nodes) => nodes.map((n) => n.dataset.direction)),
-    ["right", "left", "right"],
+    traces.map((trace) => trace.name),
+    ["Rays", "Returning rays", "Rays"],
   );
-  const colors = await rays.evaluateAll((nodes) =>
-    nodes.map((n) => getComputedStyle(n).stroke),
+  assert.deepEqual(
+    traces.map((trace) => trace.x),
+    [
+      [0, 100],
+      [100, -40],
+      [-40, 60],
+    ],
   );
-  assert.equal(colors[0], colors[2]);
-  assert.notEqual(colors[0], colors[1]);
-  const arrows = first().locator(".owl-bench-ray-arrow");
-  assert.equal(await arrows.count(), 3);
-  for (const arrow of await arrows.all()) {
-    const values = await arrow.evaluate((n) => {
-      const p = n
-        .getAttribute("d")
-        .match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi)
-        .map(Number);
-      return {
-        direction: n.dataset.direction,
-        delta: p[2] - (p[0] + p[4]) / 2,
-      };
-    });
-    assert.equal(values.delta > 0, values.direction === "right");
-  }
-  assert.match(
-    await first().locator(".owl-bench-return-key").textContent(),
-    /left/,
-  );
+  assert.equal(traces[0].color, traces[2].color);
+  assert.notEqual(traces[0].color, traces[1].color);
   await first()
     .getByRole("combobox", { name: "Trace view" })
     .selectOption("gaussian");
-  assert.equal(await arrows.count(), 0);
-  assert.equal(await first().locator(".owl-bench-return-key").count(), 0);
+  await page.waitForFunction(() =>
+    [...document.querySelector(".owl-bench-plotly").data].every(
+      (trace) => trace.name === "Unclipped Gaussian reference",
+    ),
+  );
 });
 
-test("trace views use visible-trace extents and accurate legends without syncing", async () => {
+test("trace views choose expected Plotly traces without syncing settings", async () => {
   const select = first().getByRole("combobox", { name: "Trace view" });
-  const ticks = () => first().locator('svg text[x="58"]').allTextContents();
-  assert.equal(await first().locator(".owl-bench-ray").count(), 2);
-  assert.equal(await first().locator(".owl-bench-beam").count(), 2);
-  assert.deepEqual(await ticks(), ["-2", "0", "2"]);
-  await select.selectOption("gaussian");
-  assert.equal(await first().locator(".owl-bench-ray").count(), 0);
-  assert.equal(await first().locator(".owl-bench-beam").count(), 2);
-  assert.deepEqual(await ticks(), ["-0.2", "0", "0.2"]);
-  assert.equal(await first().locator(".owl-bench-ray-key").count(), 0);
-  assert.match(
-    await first().locator(".owl-bench-legend").textContent(),
-    /intensity 1\/e² radius/,
+  const graph = first().locator(".owl-bench-plotly");
+  await page.waitForFunction(
+    () => document.querySelector(".owl-bench-plotly")?.data?.length,
   );
-  assert.match(
-    await first().locator("svg").getAttribute("aria-label"),
-    /Gaussian/,
+  assert.equal(
+    await graph.evaluate(
+      (el) => el.data.filter((trace) => trace.name === "Rays").length,
+    ),
+    2,
+  );
+  assert.equal(
+    await graph.evaluate(
+      (el) =>
+        el.data.filter((trace) => trace.name === "Unclipped Gaussian reference")
+          .length,
+    ),
+    2,
+  );
+  await select.selectOption("gaussian");
+  await page.waitForFunction(() =>
+    [...document.querySelector(".owl-bench-plotly").data].every(
+      (trace) => trace.name === "Unclipped Gaussian reference",
+    ),
   );
   await select.selectOption("rays");
-  assert.equal(await first().locator(".owl-bench-beam").count(), 0);
-  assert.equal(await first().locator(".owl-bench-beam-key").count(), 0);
-  assert.deepEqual(await ticks(), ["-2", "0", "2"]);
+  await page.waitForFunction(() =>
+    [...document.querySelector(".owl-bench-plotly").data].every(
+      (trace) => trace.name === "Rays",
+    ),
+  );
   await page.evaluate(() => {
     const model = benches[0].model;
     const result = structuredClone(model.get("result"));
@@ -352,10 +395,18 @@ test("trace views use visible-trace extents and accurate legends without syncing
     model.set("result", result);
     model.set("settings", structuredClone(model.get("settings")));
   });
+  await page.waitForFunction(() =>
+    document
+      .querySelector(".owl-bench-plotly")
+      .data.some((trace) => trace.y.includes(-4)),
+  );
   assert.equal(await select.inputValue(), "rays");
-  assert.deepEqual(await ticks(), ["-4", "0", "4"]);
   await select.selectOption("both");
-  assert.equal(await first().locator(".owl-bench-beam").count(), 2);
+  await page.waitForFunction(() =>
+    document
+      .querySelector(".owl-bench-plotly")
+      .data.some((trace) => trace.name === "Unclipped Gaussian reference"),
+  );
   assert.equal((await state()).saves, 0);
 });
 
@@ -393,7 +444,7 @@ test("instances and views are independent; cleanup unregisters and remounts", as
     await page.evaluate(() =>
       [...benches[0].model.listeners.values()].map((set) => set.size),
     ),
-    [1, 1, 1],
+    [1, 2, 1],
   );
   await page.evaluate(() => {
     sharedCleanup();
@@ -558,129 +609,104 @@ test("interface defaults scan the final medium; server rejects non-air thick len
   );
 });
 
-test("backend thick and reversed traces fit all coordinates and retain view flags", async () => {
-  await page.evaluate(() =>
-    benches[0].model.set("result", {
-      rays: {
-        z_mm: [0, 100, 100, 90, 90, -50, -20],
-        y_mm: [
-          [-2, 2],
-          [-1, 1],
-          [-1, 1],
-          [-0.8, 0.8],
-          [-0.8, 0.8],
-          [-1, 1],
-          [-1.2, 1.2],
-        ],
+test("Plotly represents thick elements and reverse ray segments in physical coordinates", async () => {
+  const graph = first().locator(".owl-bench-plotly");
+  await page.evaluate((result) => benches[0].model.set("result", result), {
+    rays: { z_mm: [0, 20, 20, -30, -30], y_mm: [[0], [1], [1], [0.5], [0.5]] },
+    gaussian: {
+      z_mm: [0, 20, 20, -30, -30],
+      radius_mm: [0.1, 0.2, 0.2, 0.3, 0.3],
+    },
+    elements: [
+      {
+        type: "thick_lens",
+        start_z_mm: 20,
+        z_mm: 30,
+        radius1_mm: 60,
+        radius2_mm: -60,
+        thickness_mm: 10,
+        n: 1.5,
+        label: "Return thick lens",
       },
-      gaussian: {
-        z_mm: [0, 120, 100, 90, -80, -20],
-        radius_mm: [0.1, 0.2, 0.2, 0.3, 0.4, 0.3],
+      {
+        type: "mirror",
+        start_z_mm: 30,
+        z_mm: -30,
+        radius_mm: null,
+        label: "Return mirror",
       },
-      elements: [
-        {
-          type: "mirror",
-          start_z_mm: 100,
-          z_mm: 100,
-          radius_mm: 100,
-          label: "Return mirror",
-        },
-        {
-          type: "thick_lens",
-          start_z_mm: 100,
-          z_mm: 90,
-          radius1_mm: 60,
-          radius2_mm: -60,
-          thickness_mm: 10,
-          n: 1.5,
-          label: "Return thick lens",
-        },
-        {
-          type: "interface",
-          start_z_mm: -50,
-          z_mm: -50,
-          radius_mm: null,
-          n1: 1,
-          n2: 1.5,
-          label: "Flat interface",
-        },
-      ],
-      metrics: {
-        length_mm: -20,
-        output_radius_mm: 0.3,
-        output_ray_half_span_mm: 1.2,
+      {
+        type: "interface",
+        start_z_mm: -30,
+        z_mm: -30,
+        radius_mm: null,
+        label: "Flat interface",
       },
-    }),
+    ],
+    metrics: {
+      length_mm: 10,
+      output_radius_mm: 0.3,
+      output_ray_half_span_mm: 1.2,
+    },
+  });
+  await page.waitForFunction(
+    () => document.querySelector(".owl-bench-plotly")?.data?.length,
   );
-  const ticks = () => first().locator('svg text[y="282"]').allTextContents();
-  assert.deepEqual(await ticks(), ["-80", "-30", "20", "70", "120"]);
-  const rect = first().locator("rect.owl-bench-thick-lens");
+  const specs = await graph.evaluate((el) => ({
+    data: el.data.map((trace) => ({ name: trace.name, x: trace.x })),
+    shapes: el.layout.shapes,
+  }));
   assert.ok(
-    Math.abs(Number(await rect.getAttribute("x")) - (66 + (170 / 200) * 634)) <
-      1e-9,
+    specs.data.some(
+      (trace) => trace.name === "Returning rays" && trace.x[0] > trace.x[1],
+    ),
   );
-  assert.ok(
-    Math.abs(Number(await rect.getAttribute("width")) - (10 / 200) * 634) <
-      1e-9,
-  );
-  assert.equal(await rect.locator("title").textContent(), "Return thick lens");
-  assert.equal(
-    await first().locator(".owl-bench-mirror title").textContent(),
-    "Return mirror",
-  );
-  assert.equal(
-    await first().locator(".owl-bench-interface title").textContent(),
-    "Flat interface",
-  );
-  assert.notEqual(
-    await first()
-      .locator(".owl-bench-mirror")
-      .evaluate((el) => getComputedStyle(el).strokeDasharray),
-    await first()
-      .locator(".owl-bench-interface")
-      .evaluate((el) => getComputedStyle(el).strokeDasharray),
-  );
-  const paths = await first()
-    .locator(".owl-bench-ray")
-    .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("d")));
-  assert.equal(paths.length, 8);
-  const segments = paths.map((path) =>
-    [...path.matchAll(/[ML]([^,]+),/g)].map((match) => Number(match[1])),
-  );
-  assert.deepEqual(
-    segments.slice(0, 4).map(([a, b]) => b > a),
-    [true, false, false, true],
-  );
-  assert.ok(segments.flat().every((x) => x >= 66 && x <= 700));
-  for (const view of ["rays", "gaussian", "both"]) {
-    await first()
-      .getByRole("combobox", { name: "Trace view" })
-      .selectOption(view);
-    await page.evaluate(() => {
-      const model = benches[0].model;
-      model.set("result", structuredClone(model.get("result")));
-    });
-    assert.deepEqual(await ticks(), ["-80", "-30", "20", "70", "120"]);
-    assert.equal(
-      await first().locator(".owl-bench-ray").count(),
-      view === "gaussian" ? 0 : 8,
-    );
-    assert.equal(
-      await first().locator(".owl-bench-beam").count(),
-      view === "rays" ? 0 : 2,
-    );
-    assert.equal(await rect.count(), 1);
-  }
+  assert.equal(specs.shapes.length, 3);
   assert.equal((await state()).saves, 0);
 });
 
-test("empty and single-plane results have finite bounds; tiny metrics retain precision", async () => {
+test("Plotly draws thin lenses with standard converging and diverging arrows", async () => {
+  await page.evaluate(() => {
+    const model = benches[0].model;
+    const result = structuredClone(model.get("result"));
+    result.elements = [
+      { type: "thin_lens", z_mm: 20, focal_length_mm: 100 },
+      { type: "thin_lens", z_mm: 40, focal_length_mm: -100 },
+    ];
+    model.set("result", result);
+  });
+  const graph = first().locator(".owl-bench-plotly");
+  await page.waitForFunction(
+    () =>
+      document.querySelector(".owl-bench-plotly")?.layout?.annotations
+        ?.length === 4,
+  );
+  const arrows = await graph.evaluate((el) =>
+    el.layout.annotations.map(({ x, y, ay, arrowhead }) => ({
+      x,
+      y,
+      ay,
+      arrowhead,
+    })),
+  );
+  assert.deepEqual(arrows, [
+    { x: 20, y: 0, ay: 0.18, arrowhead: 2 },
+    { x: 20, y: 1, ay: 0.82, arrowhead: 2 },
+    { x: 40, y: 0.18, ay: 0, arrowhead: 2 },
+    { x: 40, y: 0.82, ay: 1, arrowhead: 2 },
+  ]);
+});
+
+test("empty and single-plane results are safe; tiny metrics retain precision", async () => {
   for (const empty of [true, false]) {
     await page.evaluate(
-      (empty) =>
+      (isEmpty) =>
         benches[0].model.set("result", {
-          rays: { z_mm: empty ? [] : [0], y_mm: empty ? [] : [[0]] },
-          gaussian: { z_mm: empty ? [] : [0], radius_mm: empty ? [] : [1e-8] },
+          rays: { z_mm: isEmpty ? [] : [0], y_mm: isEmpty ? [] : [[0]] },
+          gaussian: {
+            z_mm: isEmpty ? [] : [0],
+            radius_mm: isEmpty ? [] : [1e-8],
+          },
           elements: [],
           metrics: {
             length_mm: 0,
@@ -689,14 +715,6 @@ test("empty and single-plane results have finite bounds; tiny metrics retain pre
           },
         }),
       empty,
-    );
-    assert.deepEqual(
-      await first().locator('svg text[y="282"]').allTextContents(),
-      ["-0.5", "-0.25", "0", "0.25", "0.5"],
-    );
-    assert.doesNotMatch(
-      await first().locator("svg").innerHTML(),
-      /NaN|Infinity/,
     );
     assert.match(
       await first().locator(".owl-bench-metrics").textContent(),
@@ -991,7 +1009,7 @@ test("apertures edit and reorder every element with keyboard focus and bounds", 
   );
 });
 
-test("clipped rays reach the stop, never continue, and dead samples do not expand extents", async () => {
+test("Plotly ray traces stop at blocked samples and display aperture shapes", async () => {
   await page.evaluate(() => {
     const model = benches[0].model;
     const result = structuredClone(model.get("result"));
@@ -1010,6 +1028,7 @@ test("clipped rays reach the stop, never continue, and dead samples do not expan
         [false, true],
       ],
     };
+    result.gaussian.aperture_stop_index = 2;
     result.elements = [
       {
         type: "aperture",
@@ -1025,58 +1044,26 @@ test("clipped rays reach the stop, never continue, and dead samples do not expan
   await first()
     .getByRole("combobox", { name: "Trace view" })
     .selectOption("rays");
-  const rays = first().locator(".owl-bench-ray");
-  assert.equal(await rays.count(), 3);
-  assert.equal(
-    await first()
-      .locator(".owl-bench-ray-return")
-
-      .count(),
-    2,
-  ); // segment + arrow
-  assert.deepEqual(
-    await first().locator('svg text[x="58"]').allTextContents(),
-    ["-1.2", "0", "1.2"],
+  const graph = first().locator(".owl-bench-plotly");
+  await page.waitForFunction(
+    () => document.querySelector(".owl-bench-plotly")?.data?.length,
   );
-  const bars = await first()
-    .locator(".owl-bench-aperture")
-    .evaluateAll((els) =>
-      els.map((el) => ({
-        y: +el.getAttribute("y"),
-        h: +el.getAttribute("height"),
-      })),
-    );
-  assert.equal(bars.length, 2);
-  assert.ok(bars[1].y > bars[0].y + bars[0].h);
-  assert.ok(
-    Math.abs(
-      bars[1].y - (bars[0].y + bars[0].h) - ((1.6 / 1.2) * 236) / 2 / 1.12,
-    ) < 1e-8,
-  );
-  await first()
-    .getByRole("combobox", { name: "Trace view" })
-    .selectOption("both");
-  assert.match(
-    await first().locator(".owl-bench-beam-key").textContent(),
-    /Unclipped Gaussian reference/,
-  );
-  await page.evaluate(() => {
-    const model = benches[0].model;
-    const result = structuredClone(model.get("result"));
-    result.elements[0].x_mm = 2;
-    model.set("result", result);
-  });
-  assert.equal(
-    await first()
-      .locator(".owl-bench-aperture")
-      .evaluateAll((els) =>
-        els.reduce((total, el) => total + +el.getAttribute("height"), 0),
-      ),
-    236,
-  );
+  const data = await graph.evaluate((el) => ({
+    traces: el.data.map((trace) => trace.x),
+    shapes: el.layout.shapes,
+    yRange: el._fullLayout.yaxis.range,
+  }));
+  assert.deepEqual(data.traces, [
+    [0, 10],
+    [0, 10],
+    [10, -10],
+  ]);
+  assert.equal(data.shapes.length, 2);
+  assert.ok(data.yRange.every((value) => Math.abs(value) < 10));
+  assert.equal(data.traces.flat().includes(999), false);
 });
 
-test("longitudinal physical optics is the default, log-colored, and keeps Gaussian explicit", async () => {
+test("Plotly longitudinal heatmap exposes local normalized intensity and Gaussian mode", async () => {
   await page.evaluate(() => {
     const model = benches[0].model;
     const result = structuredClone(model.get("result"));
@@ -1091,133 +1078,203 @@ test("longitudinal physical optics is the default, log-colored, and keeps Gaussi
       },
     ];
     result.longitudinal = {
-      z_mm: [0, 10, 10.1, 20],
-      path_mm: [0, 10, 10.1, 20],
+      z_mm: [0, 10, 20],
       x_mm: [-1, 0, 1],
       intensity: [
         [0.001, 1, 0.001],
         [0.001, 1, 0.001],
         [0, 0.2, 0],
-        [0, 0.1, 0],
       ],
-      elements: [],
       window_mm: 2,
-      warnings: ["Sampling: aperture spans few pixels."],
     };
     model.set("result", result);
   });
   const select = first().getByRole("combobox", { name: "Trace view" });
   assert.equal(await select.inputValue(), "physical-rays");
-  assert.deepEqual(await select.locator("option").allTextContents(), [
-    "Physical optics",
-    "Rays + physical optics",
-    "Rays",
-    "Unclipped Gaussian reference",
-  ]);
-  const image = first().locator("image.owl-bench-pop");
-  assert.equal(await image.count(), 1);
-  assert.match(await image.getAttribute("href"), /^data:image\/png;base64,/);
-  assert.equal(await first().locator("path.owl-bench-beam").count(), 0);
-  assert.match(
-    await first().locator(".owl-bench-pop-key").textContent(),
-    /Physical optics \|U\|² \/ input peak · log scale/,
+  const graph = first().locator(".owl-bench-plotly");
+  await page.waitForFunction(
+    () => document.querySelector(".owl-bench-plotly")?.data?.length,
   );
-  assert.match(
-    await first().locator("svg").textContent(),
-    /x \(mm\).*z \(mm\)/s,
+  const heat = await graph.evaluate((el) =>
+    el.data.find((trace) => trace.type === "heatmap"),
   );
-  const brightPixel = await image.evaluate(async (element) => {
-    const bitmap = new Image();
-    bitmap.src = element.getAttribute("href");
-    await bitmap.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const context = canvas.getContext("2d");
-    context.drawImage(bitmap, 0, 0);
-    return Array.from(
-      context.getImageData(Math.floor(bitmap.width / 4), 1, 1, 1).data,
-    );
-  });
-  assert.ok(brightPixel[0] > brightPixel[1] && brightPixel[0] > 150);
+  assert.deepEqual(heat.x, [0, 10, 20]);
+  assert.deepEqual(heat.y, [-1, 0, 1]);
+  assert.equal(heat.customdata[1][0], 1);
+  assert.match(heat.hovertemplate, /input peak/);
+  assert.equal(heat.z[0][0], -3);
+  assert.deepEqual(heat.colorbar.ticktext, ["0.001", "0.01", "0.1", "1"]);
+  assert.equal(heat.colorscale.at(-1)[1], "#fcffa4");
   await select.selectOption("gaussian-reference");
-  assert.equal(await first().locator("image.owl-bench-pop").count(), 0);
-  assert.equal(await first().locator("path.owl-bench-beam").count(), 2);
-  assert.match(
-    await first().locator(".owl-bench-beam-key").textContent(),
-    /Unclipped Gaussian reference/,
+  await page.waitForFunction(
+    () => document.querySelector(".owl-bench-plotly").data.length === 2,
+  );
+  assert.ok(
+    await graph.evaluate((el) =>
+      el.data.every((trace) => trace.name === "Unclipped Gaussian reference"),
+    ),
   );
 });
 
-test("cross-section pixels and center slices retain input normalization and plane selection", async () => {
+test("Plotly splits physical heatmaps at mirror reversals", async () => {
+  await page.evaluate(() => {
+    const model = benches[0].model;
+    const result = structuredClone(model.get("result"));
+    result.longitudinal = {
+      z_mm: [0, 10, 20, 20, 10, 0],
+      x_mm: [-1, 0, 1],
+      intensity: [
+        [0.1, 0.5, 0.1],
+        [0.2, 0.6, 0.2],
+        [0.3, 0.7, 0.3],
+        [0.3, 0.7, 0.3],
+        [0.2, 0.6, 0.2],
+        [0.1, 0.5, 0.1],
+      ],
+    };
+    model.set("result", result);
+  });
+  await first()
+    .getByRole("combobox", { name: "Trace view" })
+    .selectOption("physical");
+  const graph = first().locator(".owl-bench-plotly");
+  await page.waitForFunction(
+    () => document.querySelector(".owl-bench-plotly")?.data?.length,
+  );
+  const segments = await graph.evaluate((el) =>
+    el.data.filter((trace) => trace.type === "heatmap").map((trace) => trace.x),
+  );
+  assert.deepEqual(segments, [
+    [0, 10, 20],
+    [20, 10, 0],
+  ]);
+});
+
+test("Plotly cross-section heatmap and center slice expose local intensities", async () => {
   await setSections(crossSections());
   const panel = first().locator(".owl-cross-section");
   const select = panel.getByRole("combobox", { name: "Cross-section plane" });
-  const pixel = (x, y) =>
-    panel
-      .locator("canvas")
-      .evaluate(
-        (el, [x, y]) =>
-          Array.from(el.getContext("2d").getImageData(x, y, 1, 1).data),
-        [x, y],
-      );
-  assert.deepEqual(await pixel(1, 1), [255, 205, 80, 255]);
-  assert.deepEqual(await pixel(1, 0), [204, 164, 64, 255]); // positive y is up
-  const inputPath = await panel
-    .locator(".owl-cross-section-slice")
-    .getAttribute("d");
-  assert.match(inputPath, /L196,116/); // 1 on a shared 0–2 axis
+  const heat = panel.locator(".owl-cross-section-plot").nth(0);
+  const slice = panel.locator(".owl-cross-section-plot").nth(1);
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll(".owl-cross-section-plot.js-plotly-plot")
+        .length === 2,
+  );
+  let heatData = await heat.evaluate((el) => el.data[0]);
+  assert.equal(heatData.colorscale, "Inferno");
+  assert.equal(heatData.z[1][1], 1);
+  assert.match(heatData.hovertemplate, /input peak/);
+  const sliceData = await slice.evaluate((el) => el.data[0]);
+  assert.equal(sliceData.y.length, 3);
+  assert.match(sliceData.hovertemplate, /input peak/);
   await select.focus();
   await select.selectOption("1");
   assert.equal(await select.inputValue(), "1");
-  assert.deepEqual(await pixel(1, 1), [64, 51, 20, 255]);
-  assert.match(await panel.locator("output").textContent(), /12.5%/);
   assert.match(
-    await panel.locator(".owl-cross-section-slice").getAttribute("d"),
-    /L196,180.5/,
+    await panel.locator('output[aria-live="polite"]').textContent(),
+    /12.5%/,
   );
-  assert.equal(await panel.locator("li").count(), 2);
-  assert.match(await panel.locator("figcaption").textContent(), /x \(mm\)/);
-  assert.match(
-    await panel.locator(".owl-cross-section-y-axis").textContent(),
-    /y \(mm\)/,
-  );
-  await setSections(crossSections());
-  assert.equal(await select.inputValue(), "1");
-  assert.equal(
-    await select.evaluate((el) => el === document.activeElement),
-    true,
-  );
+  heatData = await heat.evaluate((el) => el.data[0]);
+  assert.equal(heatData.z[1][1], 0.25);
   assert.equal((await state()).saves, 0);
-  assert.equal(await page.locator("#b .owl-cross-section canvas").count(), 0);
-  await select.selectOption("2");
-  assert.deepEqual(await pixel(1, 1), [255, 205, 80, 255]);
-  const smaller = crossSections();
-  smaller.planes.pop();
-  smaller.warnings = [];
-  await setSections(smaller);
-  assert.equal(await select.inputValue(), "1");
-  assert.equal(await panel.locator("li").count(), 0);
-  await page.setViewportSize({ width: 320, height: 900 });
-  assert.equal(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-    true,
-  );
   await setSections({
     planes: [],
     x_mm: [],
     window_mm: 3,
     warnings: ["No planes"],
   });
-  assert.equal(await panel.locator("canvas").count(), 0);
   assert.equal(await panel.locator(".owl-bench-empty").isVisible(), true);
+});
+
+test("Plotly Gaussian reference stops visually at the first aperture", async () => {
+  const data = structuredClone(
+    await page.evaluate(() => benches[0].model.get("result")),
+  );
+  data.rays = { z_mm: [0, 10, 10, 20], y_mm: [[0], [0], [0], [0]] };
+  data.gaussian = {
+    z_mm: [0, 10, 10, 20],
+    radius_mm: [0.1, 0.2, 0.2, 0.3],
+    aperture_stop_index: 2,
+  };
+  data.elements = [{ type: "aperture", z_mm: 10, radius_mm: 0.1 }];
+  await page.evaluate((result) => benches[0].model.set("result", result), data);
+  await first()
+    .getByRole("combobox", { name: "Trace view" })
+    .selectOption("gaussian");
+  const graph = first().locator(".owl-bench-plotly");
+  await page.waitForFunction(
+    () => document.querySelector(".owl-bench-plotly")?.data?.length === 2,
+  );
+  assert.deepEqual(
+    await graph.evaluate((el) => el.data.map((trace) => trace.x.at(-1))),
+    [10, 10],
+  );
+});
+
+test("Plotly modebar provides axis zoom, pan, reset, and local intensity hover", async () => {
+  await page.evaluate(() => {
+    const model = benches[0].model;
+    const result = structuredClone(model.get("result"));
+    result.longitudinal = {
+      z_mm: [0, 20],
+      x_mm: [-1, 0, 1],
+      intensity: [
+        [0.1, 0.5, 0.2],
+        [0.3, 0.7, 0.4],
+      ],
+      window_mm: 2,
+    };
+    result.cross_sections = {
+      x_mm: [-1, 0, 1],
+      window_mm: 2,
+      warnings: [],
+      planes: [
+        {
+          label: "Output",
+          z_mm: 20,
+          transmission: 0.8,
+          intensity: [
+            [0.1, 0.2, 0.1],
+            [0.3, 0.9, 0.3],
+            [0.1, 0.2, 0.1],
+          ],
+        },
+      ],
+    };
+    model.set("result", result);
+  });
+  const graph = first().locator(".owl-bench-plotly");
+  await page.waitForFunction(() =>
+    document.querySelector(".owl-bench-plotly .modebar"),
+  );
+  const titles = await graph
+    .locator(".modebar-btn")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute("data-title")),
+    );
+  assert.ok(titles.some((title) => /zoom/i.test(title)));
+  assert.ok(titles.some((title) => /pan/i.test(title)));
+  assert.ok(titles.some((title) => /reset|autoscale/i.test(title)));
+  const heat = await graph.evaluate((el) =>
+    el.data.find((trace) => trace.type === "heatmap"),
+  );
+  assert.equal(heat.customdata[1][1], 0.7);
+  assert.match(heat.hovertemplate, /input peak/);
+  const sectionPlots = first().locator(".owl-cross-section-plot");
+  await page.waitForFunction(() =>
+    document.querySelector(".owl-cross-section-plot .modebar"),
+  );
+  assert.equal(await sectionPlots.count(), 2);
+  assert.ok(
+    await sectionPlots.nth(0).evaluate((el) => el.data[0].z[1][1] === 0.9),
+  );
 });
 
 test("standalone uses result directly and shared mount disposes independently", async () => {
   await page.evaluate((data) => {
     benches[0].cleanup();
+    benches[1].cleanup();
     const model = benches[0].model;
     model.set("view_kind", "cross_section");
     model.set("result", data);
@@ -1229,7 +1286,11 @@ test("standalone uses result directly and shared mount disposes independently", 
     direct.update(data);
   }, crossSections());
   assert.equal(await first().locator(".owl-bench-controls").count(), 0);
-  assert.equal(await first().locator("canvas").count(), 1);
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll(".owl-cross-section-plot.js-plotly-plot")
+        .length === 4,
+  );
   await first().getByRole("combobox").selectOption("1");
   const data = crossSections();
   data.planes[1].transmission = 0;
@@ -1239,7 +1300,10 @@ test("standalone uses result directly and shared mount disposes independently", 
     [0, 0, 0],
   ];
   await page.evaluate((data) => benches[0].model.set("result", data), data);
-  assert.match(await first().locator("output").textContent(), /0.0%/);
+  assert.match(
+    await first().locator('output[aria-live="polite"]').textContent(),
+    /0.0%/,
+  );
   assert.equal(await first().getByRole("combobox").inputValue(), "1");
   assert.equal(
     await page.locator("#b .owl-cross-section select").inputValue(),
@@ -1251,7 +1315,7 @@ test("standalone uses result directly and shared mount disposes independently", 
     direct.update({});
   });
   assert.equal(await first().locator("section").count(), 0);
-  assert.equal(await page.locator("#b canvas").count(), 0);
+  assert.equal(await page.locator("#b .owl-cross-section-plot").count(), 0);
   assert.deepEqual(
     await page.evaluate(() =>
       [...benches[0].model.listeners.values()].map((set) => set.size),

@@ -1,8 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["marimo==0.24.0", "owl-widgets==0.1.0", "numpy>=2", "matplotlib>=3.9"]
-# [tool.uv.sources]
-# owl-widgets = { path = "..", editable = true }
+# dependencies = ["marimo==0.24.0", "owl-widgets==0.1.1", "numpy>=2", "matplotlib>=3.9"]
 # ///
 
 import marimo
