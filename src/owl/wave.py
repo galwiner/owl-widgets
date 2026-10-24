@@ -4,16 +4,20 @@ Fields are power-normalized envelopes. Intensities from both public samplers are
 normalized to the input peak. Global carrier phase is omitted.
 """
 
+from statistics import median
+from time import perf_counter
 from typing import Any
 
 import numpy as np
+
+from ._array_backend import ArrayBackend, resolve_backend
 
 from .core import (
     Aperture, FreeSpace, GaussianBeam, Interface, Mirror, OpticalSystem,
     ThickLens, ThinLens, _finite,
 )
 
-__all__ = ["cross_sections", "longitudinal_section"]
+__all__ = ["benchmark_backends", "cross_sections", "longitudinal_section"]
 
 
 def _validate_inputs(
@@ -45,7 +49,9 @@ def _validate_inputs(
 
 class _WaveSimulation:
     def __init__(self, system: OpticalSystem, beam: GaussianBeam, grid_size: int,
-                 window_mm: float, apertures: list[Aperture]) -> None:
+                 window_mm: float, apertures: list[Aperture], backend: ArrayBackend) -> None:
+        self.backend = backend
+        self.xp = backend.xp
         self.beam = beam
         self.grid_size = grid_size
         self.window_mm = window_mm
@@ -62,64 +68,71 @@ class _WaveSimulation:
             if max(abs(aperture.x_mm), abs(aperture.y_mm)) + aperture.radius_mm >= window_mm / 2:
                 self.warn("Window: an aperture extends to or beyond the grid edge.")
 
-        self.x = (np.arange(grid_size) - grid_size // 2) * self.dx
-        self.xx, self.yy = np.meshgrid(self.x, self.x)
+        xp = self.xp
+        self.x = (xp.arange(grid_size) - grid_size // 2) * self.dx
+        self.xx, self.yy = xp.meshgrid(self.x, self.x)
         with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-            self.field = np.exp(-((self.xx / beam.waist_mm) ** 2
+            self.field = xp.exp(-((self.xx / beam.waist_mm) ** 2
                                   + (self.yy / beam.waist_mm) ** 2)).astype(complex)
             self.r2 = self.xx * self.xx + self.yy * self.yy
-            self.freq = np.fft.fftfreq(grid_size, d=self.dx)
+            self.freq = xp.fft.fftfreq(grid_size, d=self.dx)
             self.f2 = self.freq[:, None] ** 2 + self.freq[None, :] ** 2
-        if not all(np.all(np.isfinite(a)) for a in (self.field, self.r2, self.f2)):
+        if not all(bool(self.backend.scalar(xp.all(xp.isfinite(a))))
+                   for a in (self.field, self.r2, self.f2)):
             raise ValueError("Grid is outside numerical range")
-        self.input_power = float(np.sum(np.abs(self.field) ** 2))
+        self.input_power = float(self.backend.scalar(xp.sum(xp.abs(self.field) ** 2)))
         self.z = 0.0
         self.path = 0.0
         self.n = 1.0
         self.direction = 1
         border = max(1, grid_size // 20)
-        self.edge = np.ones((grid_size, grid_size), dtype=bool)
+        self.edge = xp.ones((grid_size, grid_size), dtype=bool)
         self.edge[border:-border, border:-border] = False
 
     def warn(self, message: str) -> None:
         if message not in self.warnings:
             self.warnings.append(message)
 
-    def intensity(self, label: str) -> tuple[np.ndarray, float]:
+    def intensity(self, label: str) -> tuple[Any, float]:
+        xp = self.xp
         with np.errstate(over="ignore", invalid="ignore"):
-            intensity = np.abs(self.field) ** 2
-            power = float(np.sum(intensity))
-        if (not np.all(np.isfinite(intensity)) or not np.isfinite(power)
+            intensity = xp.abs(self.field) ** 2
+            power = float(self.backend.scalar(xp.sum(intensity)))
+        finite = bool(self.backend.scalar(xp.all(xp.isfinite(intensity))))
+        if (not finite or not np.isfinite(power)
                 or not np.isfinite(self.z) or not np.isfinite(self.path)):
             raise ValueError("Wave propagation produced non-finite values")
-        if power and float(np.sum(intensity[self.edge])) / power > 1e-4:
+        edge_power = float(self.backend.scalar(xp.sum(intensity[self.edge])))
+        if power and edge_power / power > 1e-4:
             self.warn(f"Window: appreciable power near the grid edge at {label}; increase window_mm to check FFT wraparound.")
         return intensity, power
 
-    @staticmethod
-    def _phase_factor(phase: np.ndarray) -> np.ndarray:
-        if not np.all(np.isfinite(phase)):
+    def _phase_factor(self, phase: Any) -> Any:
+        if not bool(self.backend.scalar(self.xp.all(self.xp.isfinite(phase)))):
             raise ValueError("Wave phase is outside numerical range")
-        return np.exp(1j * phase)
+        return self.xp.exp(1j * phase)
 
     def propagate(self, distance_mm: float) -> None:
-        spectrum = np.fft.fft2(self.field)
-        spectral_power = np.abs(spectrum) ** 2
-        limit = 0.8 * np.max(np.abs(self.freq))
-        high = ((np.abs(self.freq[:, None]) > limit)
-                | (np.abs(self.freq[None, :]) > limit))
-        if spectral_power.sum() and spectral_power[high].sum() / spectral_power.sum() > 1e-4:
+        xp = self.xp
+        spectrum = xp.fft.fft2(self.field)
+        spectral_power = xp.abs(spectrum) ** 2
+        limit = 0.8 * float(self.backend.scalar(xp.max(xp.abs(self.freq))))
+        high = ((xp.abs(self.freq[:, None]) > limit)
+                | (xp.abs(self.freq[None, :]) > limit))
+        total = float(self.backend.scalar(spectral_power.sum()))
+        high_power = float(self.backend.scalar(spectral_power[high].sum()))
+        if total and high_power / total > 1e-4:
             self.warn("Sampling: appreciable power near the Nyquist limit; increase grid_size to check diffraction accuracy.")
         with np.errstate(over="ignore", invalid="ignore"):
             phase = -np.pi * (self.beam.wavelength_mm / self.n) * distance_mm * self.f2
-        self.field = np.fft.ifft2(spectrum * self._phase_factor(phase))
+        self.field = xp.fft.ifft2(spectrum * self._phase_factor(phase))
         self.z += self.direction * distance_mm
         self.path += distance_mm
 
     def surface(self, element: Any) -> None:
         if isinstance(element, Aperture):
-            self.field *= np.hypot(self.xx - element.x_mm,
-                                   self.yy - element.y_mm) <= element.radius_mm
+            self.field *= self.xp.hypot(self.xx - element.x_mm,
+                                        self.yy - element.y_mm) <= element.radius_mm
             return
         if isinstance(element, Interface):
             coefficient = (np.pi / self.beam.wavelength_mm
@@ -132,10 +145,14 @@ class _WaveSimulation:
             self.direction = -self.direction
         else:
             raise TypeError(f"Unsupported optical surface: {type(element).__name__}")
-        illuminated = np.abs(self.field) > 1e-3 * float(np.max(np.abs(self.field)))
-        if (np.any(illuminated)
-                and 2 * abs(coefficient) * float(np.max(np.hypot(
-                    self.xx[illuminated], self.yy[illuminated]))) * self.dx > np.pi):
+        xp = self.xp
+        field_peak = float(self.backend.scalar(xp.max(xp.abs(self.field))))
+        illuminated = xp.abs(self.field) > 1e-3 * field_peak
+        any_illuminated = bool(self.backend.scalar(xp.any(illuminated)))
+        illuminated_radius = (float(self.backend.scalar(xp.max(xp.hypot(
+            self.xx[illuminated], self.yy[illuminated])))) if any_illuminated else 0.0)
+        if (any_illuminated
+                and 2 * abs(coefficient) * illuminated_radius * self.dx > np.pi):
             self.warn("Sampling: a quadratic optical phase exceeds the spatial Nyquist limit in the illuminated region.")
         with np.errstate(over="ignore", invalid="ignore"):
             phase = coefficient * self.r2
@@ -156,16 +173,18 @@ def cross_sections(
     *,
     grid_size: int = 128,
     window_mm: float | None = None,
+    backend: str | ArrayBackend = "cpu",
 ) -> dict[str, Any]:
     """Return input and one plane after each original element."""
     grid_size, window_mm, apertures = _validate_inputs(system, beam, grid_size, window_mm)
-    sim = _WaveSimulation(system, beam, grid_size, window_mm, apertures)
+    resolved = backend if isinstance(backend, ArrayBackend) else resolve_backend(backend)
+    sim = _WaveSimulation(system, beam, grid_size, window_mm, apertures, resolved)
     planes: list[dict[str, Any]] = []
 
     def record(label: str) -> None:
         intensity, power = sim.intensity(label)
         planes.append({"label": label, "z_mm": float(sim.z),
-                       "intensity": intensity.tolist(),
+                       "intensity": sim.backend.to_numpy(intensity).tolist(),
                        "transmission": power / sim.input_power})
 
     record("input")
@@ -176,7 +195,7 @@ def cross_sections(
             else:
                 sim.surface(element)
         record(f"{index}: {original.to_dict()['type']}")
-    return {"planes": planes, "x_mm": sim.x.tolist(), "window_mm": window_mm,
+    return {"planes": planes, "x_mm": sim.backend.to_numpy(sim.x).tolist(), "window_mm": window_mm,
             "warnings": sim.warnings}
 
 
@@ -187,6 +206,7 @@ def longitudinal_section(
     grid_size: int = 128,
     window_mm: float | None = None,
     samples_per_gap: int = 60,
+    backend: str | ArrayBackend = "cpu",
 ) -> dict[str, Any]:
     """Return center-line intensity sampled along the optical path.
 
@@ -202,7 +222,8 @@ def longitudinal_section(
         raise ValueError("samples_per_gap must be an integer from 4 through 200")
     samples_per_gap = int(samples_per_gap)
     grid_size, window_mm, apertures = _validate_inputs(system, beam, grid_size, window_mm)
-    sim = _WaveSimulation(system, beam, grid_size, window_mm, apertures)
+    resolved = backend if isinstance(backend, ArrayBackend) else resolve_backend(backend)
+    sim = _WaveSimulation(system, beam, grid_size, window_mm, apertures, resolved)
     z_values: list[float] = []
     path_values: list[float] = []
     rows: list[list[float]] = []
@@ -212,7 +233,7 @@ def longitudinal_section(
         intensity, _ = sim.intensity(label)
         z_values.append(float(sim.z))
         path_values.append(float(sim.path))
-        rows.append(intensity[grid_size // 2].tolist())
+        rows.append(sim.backend.to_numpy(intensity[grid_size // 2]).tolist())
 
     def marker(kind: str, label: str) -> None:
         markers.append({"type": kind, "z_mm": float(sim.z),
@@ -245,6 +266,81 @@ def longitudinal_section(
             record(label)
             marker(original_type, label)
 
-    return {"z_mm": z_values, "path_mm": path_values, "x_mm": sim.x.tolist(),
+    return {"z_mm": z_values, "path_mm": path_values,
+            "x_mm": sim.backend.to_numpy(sim.x).tolist(),
             "intensity": rows, "elements": markers, "window_mm": window_mm,
             "warnings": sim.warnings}
+
+
+def benchmark_backends(
+    system: OpticalSystem,
+    beam: GaussianBeam,
+    grid_size: int,
+    window_mm: float,
+    *,
+    repeats: int = 3,
+) -> dict[str, Any]:
+    """Benchmark complete wave samplers on CPU and GPU on demand.
+
+    CuPy is imported and CUDA initialized only when this function is called.
+    The returned dictionary consists solely of strict JSON-native values.
+    """
+    if isinstance(repeats, bool) or not isinstance(repeats, int) or not 1 <= repeats <= 5:
+        raise ValueError("repeats must be an integer from 1 through 5")
+    try:
+        gpu = resolve_backend("gpu")
+    except (RuntimeError, ValueError) as exc:
+        return {"status": "unavailable", "device": None, "cpu_seconds": None,
+                "gpu_seconds": None, "speedup": None,
+                "peak_normalized_max_absolute_difference": None, "reason": str(exc)}
+    cpu = resolve_backend("cpu")
+
+    def run(backend: ArrayBackend) -> tuple[dict[str, Any], dict[str, Any]]:
+        return (
+            cross_sections(system, beam, grid_size=grid_size,
+                           window_mm=window_mm, backend=backend),
+            longitudinal_section(system, beam, grid_size=grid_size,
+                                 window_mm=window_mm, backend=backend),
+        )
+
+    # Warm up FFT machinery, kernels, and the CUDA context outside the timed region.
+    run(cpu)
+    run(gpu)
+    gpu.synchronize()
+    cpu_times: list[float] = []
+    gpu_times: list[float] = []
+    cpu_result: tuple[dict[str, Any], dict[str, Any]] | None = None
+    gpu_result: tuple[dict[str, Any], dict[str, Any]] | None = None
+    for _ in range(repeats):
+        start = perf_counter()
+        cpu_result = run(cpu)
+        cpu_times.append(perf_counter() - start)
+        gpu.synchronize()
+        start = perf_counter()
+        gpu_result = run(gpu)
+        gpu.synchronize()
+        gpu_times.append(perf_counter() - start)
+    assert cpu_result is not None and gpu_result is not None
+    cpu_seconds = median(cpu_times)
+    gpu_seconds = median(gpu_times)
+
+    cpu_values = np.concatenate((
+        np.asarray([plane["intensity"] for plane in cpu_result[0]["planes"]]).ravel(),
+        np.asarray(cpu_result[1]["intensity"]).ravel(),
+    ))
+    gpu_values = np.concatenate((
+        np.asarray([plane["intensity"] for plane in gpu_result[0]["planes"]]).ravel(),
+        np.asarray(gpu_result[1]["intensity"]).ravel(),
+    ))
+    scale = max(float(np.max(np.abs(cpu_values))), np.finfo(float).eps)
+    difference = float(np.max(np.abs(cpu_values - gpu_values)) / scale)
+    speedup = float(cpu_seconds / gpu_seconds) if gpu_seconds > 0 else 0.0
+    report = {"status": "available", "device": gpu.device,
+              "cpu_seconds": float(cpu_seconds), "gpu_seconds": float(gpu_seconds),
+              "speedup": speedup,
+              "peak_normalized_max_absolute_difference": difference,
+              "reason": None}
+    if not all(np.isfinite(value) for value in
+               (cpu_seconds, gpu_seconds, speedup, difference)):
+        raise RuntimeError("Backend benchmark produced non-finite results")
+    return report

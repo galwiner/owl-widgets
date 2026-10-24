@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["marimo==0.24.0", "owl-widgets==0.1.1", "numpy>=2", "matplotlib>=3.9", "wigglystuff>=0.1.0,<=0.2.22"]
+# dependencies = ["marimo==0.24.0", "owl-widgets[gpu]==0.1.2", "numpy>=2", "matplotlib>=3.9", "wigglystuff>=0.1.0,<=0.2.22"]
 # ///
 
 import marimo
@@ -47,7 +47,7 @@ def _(Bench, FreeSpace, GaussianBeam, OpticalSystem, ThinLens, mo):
             "ray_span_mm": waist_mm,
             "ray_count": 9,
             "wave": {"grid_size": 256, "window_mm": 2},
-        })
+        }, "auto")
 
     return (compute_bench,)
 
@@ -135,7 +135,7 @@ def _(
         settings, result = compute_bench(
             f_obj, f_eye, spacing, beam.waist_mm, beam.wavelength_nm
         )
-        return Bench._from_derived(settings, result)
+        return Bench._from_derived(settings, result, backend="auto")
 
     ray_bench = mo.ui.anywidget(make_bench(ray_spacing))
     gaussian_bench = mo.ui.anywidget(make_bench(gaussian_spacing))

@@ -44,6 +44,29 @@ wheels = [
 ]
 
 [[package]]
+name = "cuda-pathfinder"
+version = "1.8.4"
+source = { registry = "https://pypi.apple.com/simple" }
+wheels = [
+    { url = "https://pypi.apple.com/packages/packages/8e/93/f0904fa7d954ecc4c0db17c8d63d185d442dd59fc6757f1d1f448c59c256/cuda_pathfinder-1.8.4-py3-none-any.whl", hash = "sha256:85a4e708c725d603f576042ef32781a3d1737c51e84c35fe361d2680191af65a", size = 62594, upload-time = "2026-10-22T21:49:19.246Z" },
+]
+
+[[package]]
+name = "cupy-cuda12x"
+version = "14.2.0"
+source = { registry = "https://pypi.apple.com/simple" }
+dependencies = [
+    { name = "cuda-pathfinder" },
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://pypi.apple.com/packages/packages/7c/5b/65124de2dbaf2e85109f611a41947e39acd6dd938751c04b4c4d7bf6fc82/cupy_cuda12x-14.2.0-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:f82141761f2c81905d49387464ae29438887956d99063381c93a1d5d1b7d32e8", size = 136111459, upload-time = "2026-08-20T02:40:04.909Z" },
+    { url = "https://pypi.apple.com/packages/packages/c9/02/520f7b9f92114b4df7d88aa77c36db0d556caf76a362537687e3a2e42833/cupy_cuda12x-14.2.0-cp313-cp313-manylinux2014_x86_64.whl", hash = "sha256:efc1da23505e88d9834a3ddd3c00352c34e58e301f512d9dd593cc4bfbbdf7dc", size = 135714387, upload-time = "2026-08-20T02:40:19.077Z" },
+    { url = "https://pypi.apple.com/packages/packages/04/5e/e6134253265fefc0a35356adcebc4e3ffa81f6c9a2a74f8f9e2de32b3018/cupy_cuda12x-14.2.0-cp314-cp314-manylinux2014_x86_64.whl", hash = "sha256:db802e4b9a85ed84fd3e84790586c06e808ee45e0214cd4e80734c09fcf93073", size = 135091580, upload-time = "2026-08-20T02:40:33.351Z" },
+    { url = "https://pypi.apple.com/packages/packages/5a/c9/73227968a5b01ac31eaf1d5c58b4318e4b83654ed6dac3c310c7b2075c36/cupy_cuda12x-14.2.0-cp314-cp314t-manylinux2014_x86_64.whl", hash = "sha256:8cbbd48c9cfd6b78d0a833ebbafda3e1b057c38d6acc3c6e54de0735a7364e27", size = 135455541, upload-time = "2026-08-20T02:40:46.804Z" },
+]
+
+[[package]]
 name = "executing"
 version = "2.2.1"
 source = { registry = "https://pypi.apple.com/simple" }
@@ -209,7 +232,7 @@ wheels = [
 
 [[package]]
 name = "owl-widgets"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "anywidget" },
@@ -217,12 +240,19 @@ dependencies = [
     { name = "traitlets" },
 ]
 
+[package.optional-dependencies]
+gpu = [
+    { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "anywidget", specifier = ">=0.9" },
+    { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'gpu'", specifier = ">=13.6" },
     { name = "numpy", specifier = ">=2" },
     { name = "traitlets", specifier = ">=5" },
 ]
+provides-extras = ["gpu"]
 
 [[package]]
 name = "parso"

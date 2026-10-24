@@ -52,8 +52,53 @@ def test_defaults_and_core_owned_results(bench, system):
     assert bench.result["metrics"]["length_mm"] == 250
     assert bench.result["metrics"]["output_radius_mm"] == gaussian.radius_mm[-1]
     json.dumps(bench.get_state(), allow_nan=False)
-    for name in ("settings", "result", "error"):
+    for name in (
+        "settings", "result", "error", "backend", "benchmark_request", "benchmark"
+    ):
         assert bench.traits()[name].metadata["sync"] is True
+
+
+def test_backend_is_execution_state_and_auto_falls_back_to_cpu(bench):
+    assert bench.backend == "auto"
+    assert bench.result["execution"]["requested_backend"] == "auto"
+    assert bench.result["execution"]["wave_backend"] == "cpu"
+    assert bench.result["execution"]["device"] == "cpu"
+    assert bench.result["execution"]["fallback_reason"]
+    assert "backend" not in bench.to_dict()
+    bench.backend = "cpu"
+    assert bench.backend == "cpu"
+    assert bench.result["execution"]["wave_backend"] == "cpu"
+    before = deepcopy(bench.result)
+    bench.backend = "invalid"
+    assert bench.backend == "cpu"
+    assert bench.error
+    assert bench.result == before
+
+
+def test_benchmark_runs_only_when_requested(bench, monkeypatch):
+    calls = []
+
+    def fake_benchmark(system, beam, grid_size, window_mm):
+        calls.append((system, beam, grid_size, window_mm))
+        return {
+            "status": "available",
+            "device": "Test GPU",
+            "cpu_seconds": 2.0,
+            "gpu_seconds": 0.5,
+            "speedup": 4.0,
+            "peak_normalized_max_absolute_difference": 1e-12,
+            "reason": None,
+        }
+
+    monkeypatch.setattr("owl.bench.benchmark_backends", fake_benchmark)
+    assert bench.benchmark == {"status": "idle"}
+    assert calls == []
+    bench.benchmark_request += 1
+    assert len(calls) == 1
+    assert calls[0][2] == bench.settings["wave"]["grid_size"]
+    assert calls[0][3] == bench.result["cross_sections"]["window_mm"]
+    assert bench.benchmark["speedup"] == 4.0
+    json.dumps(bench.get_state(), allow_nan=False)
 
 
 def test_python_updates_and_observable_result(bench):

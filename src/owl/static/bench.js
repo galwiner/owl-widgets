@@ -94,11 +94,23 @@ export function render({ model, el }) {
     class: "owl-bench-metrics",
     "aria-live": "polite",
   });
+  const benchmarkPanel = node("div", { class: "owl-bench-benchmark" });
+  const benchmarkButton = node(
+    "button",
+    { type: "button" },
+    "Compare CPU and GPU",
+  );
+  const benchmarkResult = node("p", {
+    role: "status",
+    "aria-live": "polite",
+  });
+  benchmarkPanel.append(benchmarkButton, benchmarkResult);
   drawerBody.append(
     heading,
     controls,
     elements,
     toolbar,
+    benchmarkPanel,
     error,
     viewControl,
     metrics,
@@ -188,6 +200,26 @@ export function render({ model, el }) {
     result.addEventListener("click", action);
     return result;
   }
+  function drawBenchmark() {
+    const report = model.get("benchmark") || { status: "idle" };
+    benchmarkButton.disabled = report.status === "running";
+    if (report.status === "running") {
+      benchmarkResult.textContent = "Running CPU and GPU comparison…";
+    } else if (report.status === "available") {
+      benchmarkResult.textContent = `${report.device}: CPU ${fmt(report.cpu_seconds)} s · GPU ${fmt(report.gpu_seconds)} s · ${fmt(report.speedup)}× speedup · peak-normalized max difference ${fmt(report.peak_normalized_max_absolute_difference)}`;
+    } else if (["unavailable", "error"].includes(report.status)) {
+      benchmarkResult.textContent =
+        report.reason || "GPU benchmark unavailable.";
+    } else {
+      benchmarkResult.textContent = "Runs both backends only when requested.";
+    }
+  }
+  benchmarkButton.addEventListener("click", () => {
+    benchmarkButton.disabled = true;
+    benchmarkResult.textContent = "Running CPU and GPU comparison…";
+    model.set("benchmark_request", (model.get("benchmark_request") || 0) + 1);
+    model.save_changes();
+  });
   function drawControls() {
     const active = root.contains(document.activeElement)
       ? document.activeElement.dataset.key
@@ -289,7 +321,24 @@ export function render({ model, el }) {
     });
     autoLabel.append(auto, node("span", {}, "Auto"));
     windowGroup.append(windowField, autoLabel);
-    controls.append(gridLabel, windowGroup);
+    const backendLabel = node("label", { class: "owl-bench-field" });
+    const backendSelect = node("select", {
+      "data-key": "wave-backend",
+      "aria-label": "Wave calculation backend",
+    });
+    for (const [value, label] of [
+      ["auto", "Auto (GPU when available)"],
+      ["cpu", "CPU"],
+      ["gpu", "GPU required"],
+    ])
+      backendSelect.append(node("option", { value }, label));
+    backendSelect.value = model.get("backend") || "auto";
+    backendSelect.addEventListener("change", () => {
+      model.set("backend", backendSelect.value);
+      model.save_changes();
+    });
+    backendLabel.append(node("span", {}, "Wave backend"), backendSelect);
+    controls.append(gridLabel, windowGroup, backendLabel);
     elements.replaceChildren();
     s.system.elements.forEach((item, index) => {
       const names = {
@@ -475,6 +524,9 @@ export function render({ model, el }) {
     });
     metrics.textContent = [
       `Length ${fmt(result.metrics.length_mm)} mm`,
+      ...(result.execution
+        ? [`Wave backend ${result.execution.wave_backend.toUpperCase()}`]
+        : []),
       ...(mode === "gaussian-reference" ||
       mode === "gaussian" ||
       mode === "both"
@@ -492,15 +544,20 @@ export function render({ model, el }) {
   const refreshCrossSection = () =>
     crossSection.update(model.get("result")?.cross_sections);
   model.on("change:settings", drawControls);
+  model.on("change:backend", drawControls);
+  model.on("change:benchmark", drawBenchmark);
   model.on("change:result", drawPlot);
   model.on("change:result", refreshCrossSection);
   model.on("change:error", showError);
   drawControls();
   drawPlot();
   refreshCrossSection();
+  drawBenchmark();
   showError();
   return () => {
     model.off("change:settings", drawControls);
+    model.off("change:backend", drawControls);
+    model.off("change:benchmark", drawBenchmark);
     model.off("change:result", drawPlot);
     model.off("change:result", refreshCrossSection);
     model.off("change:error", showError);

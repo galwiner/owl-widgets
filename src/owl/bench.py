@@ -11,17 +11,18 @@ import anywidget
 import numpy as np
 import traitlets
 
+from ._array_backend import resolve_backend
 from .core import Aperture, FreeSpace, GaussianBeam, Interface, Mirror, OpticalSystem, ThickLens, ThinLens
 from .frontend import _WIDGET_ESM
-from .wave import cross_sections, longitudinal_section
+from .wave import benchmark_backends, cross_sections, longitudinal_section
 
 
 _GAUSSIAN_SAMPLES_PER_GAP = 80
 
 
 @lru_cache(maxsize=64)
-def _cached_calculate(payload: bytes) -> tuple[dict[str, Any], dict[str, Any]]:
-    return Bench._calculate(pickle.loads(payload))
+def _cached_calculate(payload: bytes, backend: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    return Bench._calculate(pickle.loads(payload), backend)
 
 
 class Bench(anywidget.AnyWidget):
@@ -49,6 +50,9 @@ class Bench(anywidget.AnyWidget):
     settings = traitlets.Dict().tag(sync=True)
     result = traitlets.Dict().tag(sync=True)
     error = traitlets.Unicode("").tag(sync=True)
+    backend = traitlets.Unicode("auto").tag(sync=True)
+    benchmark_request = traitlets.Int(0).tag(sync=True)
+    benchmark = traitlets.Dict(default_value={"status": "idle"}).tag(sync=True)
 
     def __init__(
         self,
@@ -59,6 +63,7 @@ class Bench(anywidget.AnyWidget):
         *,
         grid_size: int = 128,
         window_mm: float | None = None,
+        backend: str = "auto",
     ) -> None:
         if not isinstance(system, OpticalSystem) or not isinstance(beam, GaussianBeam):
             raise ValueError("Expected an OpticalSystem and a GaussianBeam")
@@ -68,36 +73,42 @@ class Bench(anywidget.AnyWidget):
             "ray_span_mm": ray_span_mm,
             "ray_count": ray_count,
             "wave": {"grid_size": grid_size, "window_mm": window_mm},
-        })
+        }, backend)
         self._updating = True
         self._valid_settings = deepcopy(settings)
-        super().__init__(settings=settings, result=result)
+        self._valid_backend = backend
+        super().__init__(settings=settings, result=result, backend=backend)
         self._updating = False
 
     @classmethod
     def _from_derived(
-        cls, settings: dict[str, Any], result: dict[str, Any]
+        cls, settings: dict[str, Any], result: dict[str, Any], *, backend: str = "cpu"
     ) -> "Bench":
         """Create a fresh widget model from trusted, precomputed data."""
         widget = cls.__new__(cls)
         widget._updating = True
         widget._valid_settings = deepcopy(settings)
+        widget._valid_backend = backend
         anywidget.AnyWidget.__init__(
-            widget, settings=deepcopy(settings), result=deepcopy(result)
+            widget, settings=deepcopy(settings), result=deepcopy(result), backend=backend
         )
         widget._updating = False
         return widget
 
     @staticmethod
-    def _derive(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _derive(
+        data: dict[str, Any], backend: str = "cpu"
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         try:
             with np.errstate(over="raise", invalid="raise", divide="raise"):
-                return deepcopy(_cached_calculate(pickle.dumps(data)))
+                return deepcopy(_cached_calculate(pickle.dumps(data), backend))
         except (TypeError, ArithmeticError) as exc:
             raise ValueError(f"Invalid optical parameters: {exc}") from exc
 
     @staticmethod
-    def _calculate(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _calculate(
+        data: dict[str, Any], backend: str = "cpu"
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         keys = {"system", "beam", "ray_span_mm", "ray_count"}
         if not isinstance(data, dict) or set(data) not in (keys, keys | {"wave"}):
             raise ValueError(f"Expected settings keys {sorted(keys)} and optional wave")
@@ -171,8 +182,9 @@ class Bench(anywidget.AnyWidget):
             "ray_count": count,
             "wave": deepcopy(wave),
         }
-        sections = cross_sections(system, beam, **wave)
-        longitudinal = longitudinal_section(system, beam, **wave)
+        resolved_backend = resolve_backend(backend)
+        sections = cross_sections(system, beam, **wave, backend=resolved_backend)
+        longitudinal = longitudinal_section(system, beam, **wave, backend=resolved_backend)
         settings["wave"] = {
             "grid_size": len(sections["x_mm"]),
             "window_mm": None if wave["window_mm"] is None else sections["window_mm"],
@@ -192,6 +204,12 @@ class Bench(anywidget.AnyWidget):
                 "aperture_stop_index": aperture_stop_index,
             },
             "elements": elements,
+            "execution": {
+                "requested_backend": backend,
+                "wave_backend": resolved_backend.name,
+                "device": resolved_backend.device,
+                "fallback_reason": resolved_backend.fallback_reason,
+            },
             "metrics": {
                 "length_mm": float(system.length_mm),
                 "output_z_mm": system.output_z_mm,
@@ -212,7 +230,7 @@ class Bench(anywidget.AnyWidget):
         if self._updating:
             return proposal["value"]
         try:
-            settings, result = self._derive(proposal["value"])
+            settings, result = self._derive(proposal["value"], self._valid_backend)
         except ValueError as exc:
             self.error = str(exc) or "Propagation failed; check the optical parameters"
             return deepcopy(self._valid_settings)
@@ -221,6 +239,42 @@ class Bench(anywidget.AnyWidget):
             self.result = result
             self.error = ""
         return settings
+
+    @traitlets.validate("backend")
+    def _validate_backend(self, proposal: dict[str, Any]) -> str:
+        value = proposal["value"]
+        if self._updating:
+            return value
+        try:
+            settings, result = self._derive(self._valid_settings, value)
+        except (ValueError, RuntimeError) as exc:
+            self.error = str(exc) or "Wave backend unavailable"
+            self.send_state("backend")
+            return self._valid_backend
+        self._valid_backend = value
+        self._valid_settings = deepcopy(settings)
+        with self.hold_sync():
+            self.result = result
+            self.error = ""
+            self.benchmark = {"status": "idle"}
+        return value
+
+    @traitlets.observe("benchmark_request")
+    def _run_benchmark(self, change: dict[str, Any]) -> None:
+        if self._updating or change["new"] == change["old"]:
+            return
+        self.benchmark = {"status": "running"}
+        try:
+            wave = self._valid_settings["wave"]
+            report = benchmark_backends(
+                self.system,
+                self.beam,
+                grid_size=wave["grid_size"],
+                window_mm=self.result["cross_sections"]["window_mm"],
+            )
+        except Exception as exc:
+            report = {"status": "error", "reason": str(exc) or "Benchmark failed"}
+        self.benchmark = report
 
     @property
     def system(self) -> OpticalSystem:
@@ -239,7 +293,7 @@ class Bench(anywidget.AnyWidget):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Bench":
         """Restore full settings, rejecting invalid or unknown fields."""
-        settings, _ = cls._derive(data)
+        settings, _ = cls._derive(data, "cpu")
         return cls(
             OpticalSystem.from_dict(settings["system"]),
             GaussianBeam.from_dict(settings["beam"]),

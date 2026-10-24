@@ -12,6 +12,8 @@ from typing import Any
 
 import numpy as np
 
+from ._array_backend import resolve_backend
+
 __all__ = ["ApertureStudySpec", "calculate_aperture_study"]
 
 
@@ -66,7 +68,9 @@ class ApertureStudySpec:
         object.__setattr__(self, "aperture_diameter_ratios", tuple(ratios))
 
 
-def calculate_aperture_study(spec: ApertureStudySpec) -> dict[str, Any]:
+def calculate_aperture_study(
+    spec: ApertureStudySpec, *, backend: str = "cpu"
+) -> dict[str, Any]:
     """Calculate the complete aperture comparison as a finite JSON dictionary.
 
     ``None`` denotes the unclipped control. Intensities in ``scenarios`` share
@@ -77,24 +81,26 @@ def calculate_aperture_study(spec: ApertureStudySpec) -> dict[str, Any]:
     if not isinstance(spec, ApertureStudySpec):
         raise ValueError("spec must be an ApertureStudySpec")
 
+    resolved = resolve_backend(backend)
+    xp = resolved.xp
     n, width = spec.grid_size, spec.window_mm
     w0, lam, d, focal = spec.waist_mm, spec.wavelength_nm * 1e-6, spec.distance_mm, spec.focal_length_mm
     if d <= focal:
         raise ValueError("distance_mm must exceed focal_length_mm for a finite real geometric image")
     dx = width / n
-    x = (np.arange(n) - n // 2) * dx
-    xx, yy = np.meshgrid(x, x)
-    r2, radius = xx * xx + yy * yy, np.hypot(xx, yy)
-    freq = np.fft.fftfreq(n, d=dx)
+    x = (xp.arange(n) - n // 2) * dx
+    xx, yy = xp.meshgrid(x, x)
+    r2, radius = xx * xx + yy * yy, xp.hypot(xx, yy)
+    freq = xp.fft.fftfreq(n, d=dx)
     f2 = freq[:, None] ** 2 + freq[None, :] ** 2
 
-    def propagate(field: np.ndarray, distance: float) -> np.ndarray:
-        return np.fft.ifft2(np.fft.fft2(field) * np.exp(-1j * np.pi * lam * distance * f2))
+    def propagate(field: Any, distance: float) -> Any:
+        return xp.fft.ifft2(xp.fft.fft2(field) * xp.exp(-1j * np.pi * lam * distance * f2))
 
-    def slices(field: np.ndarray, distances: np.ndarray) -> np.ndarray:
-        spectrum = np.fft.fft2(field)
-        return np.asarray([
-            np.abs(np.fft.ifft2(spectrum * np.exp(-1j * np.pi * lam * z * f2))[n // 2]) ** 2
+    def slices(field: Any, distances: np.ndarray) -> Any:
+        spectrum = xp.fft.fft2(field)
+        return xp.stack([
+            xp.abs(xp.fft.ifft2(spectrum * xp.exp(-1j * np.pi * lam * z * f2))[n // 2]) ** 2
             for z in distances
         ]).T
 
@@ -109,35 +115,35 @@ def calculate_aperture_study(spec: ApertureStudySpec) -> dict[str, Any]:
     image_radius = np.sqrt(-lam / (np.pi * np.imag(1 / (q_out + geometric_image_after_lens))))
     z_end = geometric_image_z + 0.1 * geometric_image_after_lens
 
-    field0 = np.exp(-r2 / w0**2).astype(complex)
-    field_lens = propagate(field0, d) * np.exp(-1j * np.pi * r2 / (lam * focal))
-    incident_power = float(np.sum(np.abs(field_lens) ** 2))
-    reference_peak = float(np.max(np.abs(propagate(field_lens, waist_after_lens)) ** 2))
+    field0 = xp.exp(-r2 / w0**2).astype(complex)
+    field_lens = propagate(field0, d) * xp.exp(-1j * np.pi * r2 / (lam * focal))
+    incident_power = float(resolved.scalar(xp.sum(xp.abs(field_lens) ** 2)))
+    reference_peak = float(resolved.scalar(xp.max(xp.abs(propagate(field_lens, waist_after_lens)) ** 2)))
     z_grid = np.linspace(0, z_end, spec.longitudinal_samples)
     before = z_grid <= d
     pre_slice = slices(field0, z_grid[before])
     post_distances = z_grid[~before] - d
 
-    def mask_for(ratio: float | None) -> tuple[np.ndarray, float | None]:
+    def mask_for(ratio: float | None) -> tuple[Any, float | None]:
         if ratio is None:
-            return np.ones_like(radius), None
+            return xp.ones_like(radius), None
         aperture_radius = ratio * lens_radius / 2
         # Interpret the one-pixel ramp as covered pixel area. Its square root is
         # the field multiplier, preserving that fractional area in optical power.
-        coverage = np.clip((aperture_radius - radius) / dx + 0.5, 0, 1)
-        return np.sqrt(coverage), aperture_radius
+        coverage = xp.clip((aperture_radius - radius) / dx + 0.5, 0, 1)
+        return xp.sqrt(coverage), aperture_radius
 
     scenario_work: list[dict[str, Any]] = []
-    fields: list[np.ndarray] = []
+    fields: list[Any] = []
     for ratio in spec.aperture_diameter_ratios:
         mask, aperture_radius = mask_for(ratio)
         clipped = field_lens * mask
         post_slice = slices(clipped, post_distances)
         center = post_slice[n // 2]
-        peak_index = int(np.argmax(center))
+        peak_index = int(resolved.scalar(xp.argmax(center)))
         peak_distance = float(post_distances[peak_index])
-        spot = np.abs(propagate(clipped, peak_distance)) ** 2
-        sampled_transmission = float(np.sum(np.abs(clipped) ** 2) / incident_power)
+        spot = xp.abs(propagate(clipped, peak_distance)) ** 2
+        sampled_transmission = float(resolved.scalar(xp.sum(xp.abs(clipped) ** 2)) / incident_power)
         analytic_transmission = 1.0 if ratio is None else float(1 - np.exp(-(ratio**2) / 2))
         brightest_z = d + peak_distance
         scenario_work.append({
@@ -148,9 +154,10 @@ def calculate_aperture_study(spec: ApertureStudySpec) -> dict[str, Any]:
             "fresnel_number": None if aperture_radius is None else aperture_radius**2 / (lam * focal),
             "brightest_z_mm": brightest_z,
             "focal_shift_mm": brightest_z - (d + waist_after_lens),
-            "peak_ratio": float(np.max(spot) / reference_peak),
-            "longitudinal_intensity": (np.hstack((pre_slice, post_slice)) / reference_peak).tolist(),
-            "brightest_spot_intensity": (spot / reference_peak).tolist(),
+            "peak_ratio": float(resolved.scalar(xp.max(spot)) / reference_peak),
+            "longitudinal_intensity": resolved.to_numpy(
+                xp.hstack((pre_slice, post_slice)) / reference_peak).tolist(),
+            "brightest_spot_intensity": resolved.to_numpy(spot / reference_peak).tolist(),
         })
         fields.append(clipped)
 
@@ -167,8 +174,9 @@ def calculate_aperture_study(spec: ApertureStudySpec) -> dict[str, Any]:
     if histogram_edges[-1] < edge_limit:
         histogram_edges = np.append(histogram_edges, edge_limit)
 
-    image_wave_intensities = [np.abs(propagate(field, geometric_image_after_lens)) ** 2 for field in fields]
-    wave_normalization = float(np.max(np.abs(propagate(field_lens, geometric_image_after_lens)) ** 2))
+    image_wave_intensities = [xp.abs(propagate(field, geometric_image_after_lens)) ** 2 for field in fields]
+    wave_normalization = float(resolved.scalar(xp.max(
+        xp.abs(propagate(field_lens, geometric_image_after_lens)) ** 2)))
     all_ray_histograms: list[np.ndarray] = []
     comparison_work: list[dict[str, Any]] = []
     circle = radius < image_radius
@@ -183,9 +191,10 @@ def calculate_aperture_study(spec: ApertureStudySpec) -> dict[str, Any]:
             "diameter_ratio": ratio,
             "passing_ray_count": int(np.count_nonzero(keep)),
             "ray_encircled_incident_fraction": float(np.count_nonzero(keep & (np.hypot(image_positions[0], image_positions[1]) < image_radius)) / spec.ray_count),
-            "wave_encircled_incident_fraction": float(np.sum(wave_image[circle]) / incident_power),
+            "wave_encircled_incident_fraction": float(
+                resolved.scalar(xp.sum(wave_image[circle])) / incident_power),
             "ray_histogram": None,
-            "wave_intensity": (wave_image / wave_normalization).tolist(),
+            "wave_intensity": resolved.to_numpy(wave_image / wave_normalization).tolist(),
         })
     control_histogram, _, _ = np.histogram2d(
         image_positions[0], image_positions[1], bins=(histogram_edges, histogram_edges)
@@ -237,7 +246,7 @@ def calculate_aperture_study(spec: ApertureStudySpec) -> dict[str, Any]:
         "schema_version": 1,
         "coordinates": {"units": {"length": "mm", "angle": "rad"}, "array_order": {"longitudinal_intensity": "[x,z]", "spots_and_histograms": "[y,x]"}, "origin": "input_waist"},
         "spec": {"waist_mm": w0, "wavelength_nm": spec.wavelength_nm, "distance_mm": d, "focal_length_mm": focal, "aperture_diameter_ratios": list(spec.aperture_diameter_ratios), "grid_size": n, "window_mm": width, "longitudinal_samples": spec.longitudinal_samples, "ray_count": spec.ray_count, "seed": spec.seed},
-        "grids": {"x_mm": x.tolist(), "z_mm": z_grid.tolist(), "image_histogram_edges_mm": histogram_edges.tolist()},
+        "grids": {"x_mm": resolved.to_numpy(x).tolist(), "z_mm": z_grid.tolist(), "image_histogram_edges_mm": histogram_edges.tolist()},
         "normalization": {"longitudinal_and_brightest_spots": "unclipped_true_waist_peak", "unclipped_true_waist_peak": reference_peak, "image_plane_wave_peak": wave_normalization, "image_plane_ray_histogram_peak": ray_normalization},
         "gaussian_reference": {"rayleigh_range_mm": z_rayleigh, "lens_radius_mm": lens_radius, "radius_by_z_mm": w_reference.tolist(), "geometric_image_z_mm": geometric_image_z, "geometric_image_radius_mm": image_radius, "true_waist_z_mm": d + waist_after_lens, "true_waist_radius_mm": true_waist_radius, "magnification": -geometric_image_after_lens / d},
         "scenarios": scenario_work,

@@ -132,13 +132,17 @@ class _Study(anywidget.AnyWidget, Generic[SpecT]):
         return cls(cls._spec_from_dict(settings))
 
 
+def _calculate_aperture_study_auto(spec: ApertureStudySpec) -> dict[str, Any]:
+    return calculate_aperture_study(spec, backend="auto")
+
+
 class ApertureStudy(_Study[ApertureStudySpec]):
     """Interactive view of :func:`calculate_aperture_study`."""
 
     view_kind = traitlets.Unicode("aperture_study").tag(sync=True)
     _valid_sections = frozenset({"all", "focus", "comparison"})
     _spec_type = ApertureStudySpec
-    _calculate = staticmethod(calculate_aperture_study)
+    _calculate = staticmethod(_calculate_aperture_study_auto)
 
 
 class ApertureFocusStudy(ApertureStudy):

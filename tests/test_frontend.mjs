@@ -107,6 +107,9 @@ beforeEach(async () => {
             },
           },
           error: "",
+          backend: "auto",
+          benchmark_request: 0,
+          benchmark: { status: "idle" },
         };
         this.listeners = new Map();
         this.saves = 0;
@@ -170,6 +173,44 @@ test("bench details are folded by default and keyboard-expandable", async () => 
   await summary.press("Enter");
   assert.equal(await drawer.getAttribute("open"), "");
   assert.equal(await first().locator(".owl-bench-controls").isVisible(), true);
+});
+
+test("GPU backend and benchmark controls are explicit and accessible", async () => {
+  const backend = first().getByRole("combobox", {
+    name: "Wave calculation backend",
+  });
+  assert.equal(await backend.inputValue(), "auto");
+  const before = await state();
+  await backend.selectOption("cpu");
+  assert.equal(
+    await page.evaluate(() => benches[0].model.get("backend")),
+    "cpu",
+  );
+  assert.equal((await state()).saves, before.saves + 1);
+
+  const compare = first().getByRole("button", { name: "Compare CPU and GPU" });
+  const status = first().locator(".owl-bench-benchmark [role='status']");
+  assert.match(await status.textContent(), /only when requested/i);
+  await compare.click();
+  assert.equal(
+    await page.evaluate(() => benches[0].model.get("benchmark_request")),
+    1,
+  );
+  assert.match(await status.textContent(), /running/i);
+  assert.equal(await compare.isDisabled(), true);
+  await page.evaluate(() =>
+    benches[0].model.set("benchmark", {
+      status: "available",
+      device: "Test GPU",
+      cpu_seconds: 2,
+      gpu_seconds: 0.5,
+      speedup: 4,
+      peak_normalized_max_absolute_difference: 1e-12,
+      reason: null,
+    }),
+  );
+  assert.match(await status.textContent(), /Test GPU.*4× speedup/i);
+  assert.equal(await compare.isEnabled(), true);
 });
 
 test("paired sliders preview locally, commit on release, and keep focus", async () => {
@@ -444,7 +485,7 @@ test("instances and views are independent; cleanup unregisters and remounts", as
     await page.evaluate(() =>
       [...benches[0].model.listeners.values()].map((set) => set.size),
     ),
-    [1, 2, 1],
+    [1, 1, 1, 2, 1],
   );
   await page.evaluate(() => {
     sharedCleanup();
@@ -454,7 +495,7 @@ test("instances and views are independent; cleanup unregisters and remounts", as
     await page.evaluate(() =>
       [...benches[0].model.listeners.values()].map((set) => set.size),
     ),
-    [0, 0, 0],
+    [0, 0, 0, 0, 0],
   );
   await page.evaluate(() => {
     benches[0].cleanup = window.renderBench({
@@ -1320,6 +1361,6 @@ test("standalone uses result directly and shared mount disposes independently", 
     await page.evaluate(() =>
       [...benches[0].model.listeners.values()].map((set) => set.size),
     ),
-    [0, 0, 0],
+    [0, 0, 0, 0, 0],
   );
 });

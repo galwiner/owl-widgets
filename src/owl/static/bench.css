@@ -206,6 +206,22 @@
 .owl-bench-toolbar span {
     flex: 1 1 220px;
 }
+.owl-bench-benchmark {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin: 12px 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--owl-line);
+}
+.owl-bench-benchmark p {
+    flex: 1 1 260px;
+    margin: 0;
+    color: var(--owl-muted);
+    font-variant-numeric: tabular-nums;
+}
+
 .owl-bench-error {
     padding: 9px 12px;
     border: 1px solid #b32929;
@@ -252,6 +268,10 @@
     background: #f2f5f8;
     cursor: default;
     border-color: var(--owl-line);
+    opacity: 0.65;
+}
+.owl-bench-benchmark button:disabled {
+    cursor: wait;
 }
 
 .owl-bench-drawer-body > .owl-cross-section {

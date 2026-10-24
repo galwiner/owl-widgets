@@ -20,6 +20,14 @@ uv add owl-widgets
 
 The distribution name is `owl-widgets`; the Python import is `owl`. Runtime JavaScript and CSS, including Plotly.js, ship in the wheel for offline use.
 
+Optional NVIDIA GPU acceleration for scalar FFT propagation is available on Linux/x86-64 systems with a compatible CUDA driver:
+
+```sh
+pip install "owl-widgets[gpu]"
+```
+
+CuPy is not a mandatory dependency. Explicit CPU execution never imports it; `backend="auto"` probes for an existing usable CuPy installation and falls back to NumPy when none is available. On unsupported platforms the `gpu` extra intentionally installs no CUDA package, and `backend="gpu"` reports that no GPU backend is available.
+
 ## Run the notebooks
 
 Run locally from this checkout's `optics` directory:
@@ -30,7 +38,7 @@ uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/apertures.py
 uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/keplerian_telescope.py
 ```
 
-Each notebook declares all dependencies inline (PEP 723) and pins `owl-widgets==0.1.1` from PyPI. No global installation, local checkout, or `sys.path` modification is needed.
+Each notebook declares all dependencies inline (PEP 723) and pins `owl-widgets[gpu]==0.1.2` from PyPI. No global installation, local checkout, or `sys.path` modification is needed.
 
 - **Optics basics:** free propagation, thin lenses, ray focus versus Gaussian waist, wavelength tuning, mirrors, interfaces, and thick lenses. [![Open optics basics in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/galwiner/owl-widgets/blob/main/notebooks/optics_basics.py)
 - **Apertures:** controlled Fresnel aperture sweeps, brightest-plane spots, launch-height-colored ray/wave comparisons, stop taxonomy, field-height-colored ray fans, relative illumination, and cat’s-eye pupil maps. [![Open apertures in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/galwiner/owl-widgets/blob/main/notebooks/apertures.py)
@@ -75,6 +83,21 @@ profile.z_mm, profile.radius_mm, profile.q_mm
 - Invalid numerical edits retain the last valid calculation and expose `error`.
 - View selection is local to each display and is not part of the saved optical experiment.
 - Sliders preview locally while scrubbing and recalculate on release; number inputs support values outside the default slider ranges.
+
+### GPU acceleration and measurement
+
+`Bench(..., backend="auto")` uses CuPy for scalar FFT propagation when a usable NVIDIA GPU is available and otherwise falls back to NumPy. The aperture study widgets use the same automatic selection. Choose `"cpu"` for deterministic CPU execution or `"gpu"` to require a GPU and receive a clear error when it is unavailable. Backend choice is execution state, not part of the saved optical experiment returned by `to_dict()`.
+
+The **Compare CPU and GPU** button in the Bench setup drawer is deliberately on demand: it warms up both paths, runs the complete cross-section and longitudinal calculations three times on each backend, includes device-to-host conversion, and reports median elapsed time, speedup, and peak-normalized maximum absolute difference. Normal updates do not run both paths. The benchmark keeps the notebook kernel busy until it finishes. ABCD ray and Gaussian q-parameter calculations remain on the CPU because their small matrices do not benefit from GPU dispatch.
+
+The numerical functions also accept `backend="cpu"`, `"gpu"`, or `"auto"`:
+
+```python
+from owl import cross_sections, longitudinal_section
+
+sections = cross_sections(system, beam, grid_size=512, backend="auto")
+longitudinal = longitudinal_section(system, beam, grid_size=512, backend="auto")
+```
 
 ### Apertures and linked cross sections
 
@@ -197,6 +220,6 @@ Contributions are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md). Report susp
 
 ## Publication
 
-Distribution name: `owl-widgets`; Python import: `owl`; working version: `0.1.1`. Licensed under the MIT License; see `LICENSE`.
+Distribution name: `owl-widgets`; Python import: `owl`; working version: `0.1.2`. Licensed under the MIT License; see `LICENSE`.
 
-Version `0.1.1` is published at [PyPI](https://pypi.org/project/owl-widgets/0.1.1/). The example notebooks pin that release in their inline PEP 723 dependencies. Existing `abcd/` notebooks are unchanged.
+Version `0.1.2` is published at [PyPI](https://pypi.org/project/owl-widgets/0.1.2/). The example notebooks pin that release in their inline PEP 723 dependencies. Existing `abcd/` notebooks are unchanged.
