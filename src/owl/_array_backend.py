@@ -47,9 +47,10 @@ def resolve_backend(name: str = "cpu") -> ArrayBackend:
         count = int(cupy.cuda.runtime.getDeviceCount())
         if count < 1:
             raise RuntimeError("no CUDA devices were detected")
-        # Force context creation and a tiny operation; an installed CuPy package
-        # alone does not imply a usable driver/device.
-        cupy.zeros(1).sum()
+        # Force context creation and a real FFT. CuPy imports cuFFT lazily, so a
+        # simple allocation can succeed even when the runtime lacks libcufft.
+        probe = cupy.zeros((2, 2), dtype=cupy.complex128)
+        cupy.fft.fft2(probe)
         cupy.cuda.Stream.null.synchronize()
         device_id = int(cupy.cuda.runtime.getDevice())
         properties = cupy.cuda.runtime.getDeviceProperties(device_id)

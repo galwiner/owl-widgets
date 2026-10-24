@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "owl-widgets"
-version = "0.1.2"
+version = "0.1.3"
 description = "OWL: composable optics widgets for Python notebooks"
 readme = "README.md"
 license = "MIT"
@@ -13,7 +13,10 @@ requires-python = ">=3.12"
 dependencies = ["numpy>=2", "anywidget>=0.9", "traitlets>=5"]
 
 [project.optional-dependencies]
-gpu = ["cupy-cuda12x>=13.6; sys_platform == 'linux' and platform_machine == 'x86_64'"]
+gpu = [
+    "cupy-cuda12x[ctk]>=14.2,<15; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "cuda-toolkit[cublas,cudart,cufft,curand,cusolver,cusparse,nvrtc]>=12.8,<12.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [project.urls]
 Homepage = "https://github.com/galwiner/owl-widgets"

@@ -49,6 +49,42 @@ def test_auto_falls_back_and_explicit_gpu_has_clear_error(monkeypatch):
         _array_backend.resolve_backend("cuda")
 
 
+def test_auto_falls_back_when_cufft_is_missing(monkeypatch):
+    class Runtime:
+        @staticmethod
+        def getDeviceCount():
+            return 1
+
+        @staticmethod
+        def getDevice():
+            return 0
+
+        @staticmethod
+        def getDeviceProperties(device_id):
+            return {"name": b"Test GPU"}
+
+    class Stream:
+        null = type("NullStream", (), {"synchronize": staticmethod(lambda: None)})()
+
+    class FFT:
+        @staticmethod
+        def fft2(value):
+            raise ImportError("libcufft.so.11: cannot open shared object file")
+
+    fake_cupy = type("FakeCuPy", (), {
+        "cuda": type("Cuda", (), {"runtime": Runtime, "Stream": Stream}),
+        "fft": FFT,
+        "complex128": complex,
+        "zeros": staticmethod(lambda shape, dtype=None: np.zeros(shape, dtype=dtype)),
+    })()
+    monkeypatch.setattr(_array_backend, "import_module", lambda name: fake_cupy)
+    resolved = _array_backend.resolve_backend("auto")
+    assert resolved.name == "cpu"
+    assert "libcufft.so.11" in resolved.fallback_reason
+    with pytest.raises(RuntimeError, match="libcufft.so.11"):
+        _array_backend.resolve_backend("gpu")
+
+
 def test_aperture_cpu_preserves_schema_and_seeded_rays(monkeypatch):
     monkeypatch.setattr(
         _array_backend, "import_module",
