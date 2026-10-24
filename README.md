@@ -22,7 +22,7 @@ The distribution name is `owl-widgets`; the Python import is `owl`. Runtime Java
 
 ## Run the notebooks
 
-From this checkout's `optics` directory:
+Run locally from this checkout's `optics` directory:
 
 ```sh
 uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/optics_basics.py
@@ -32,9 +32,9 @@ uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/keplerian_telescope.py
 
 Each notebook declares all dependencies inline (PEP 723) and pins `owl-widgets==0.1.1` from PyPI. No global installation, local checkout, or `sys.path` modification is needed.
 
-- `optics_basics.py`: free propagation, thin lenses, ray focus versus Gaussian waist, wavelength tuning, mirrors, interfaces, and thick lenses.
-- `apertures.py`: controlled Fresnel aperture sweeps, brightest-plane spots, launch-height-colored ray/wave comparisons, stop taxonomy, field-height-colored ray fans, relative illumination, and cat’s-eye pupil maps.
-- `keplerian_telescope.py`: contrasts a two-positive-lens ray-optical afocal spacing ($f_{obj} + f_{eye}$) with the spacing that minimizes Gaussian-beam divergence.
+- **Optics basics:** free propagation, thin lenses, ray focus versus Gaussian waist, wavelength tuning, mirrors, interfaces, and thick lenses. [![Open optics basics in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/galwiner/owl-widgets/blob/main/notebooks/optics_basics.py)
+- **Apertures:** controlled Fresnel aperture sweeps, brightest-plane spots, launch-height-colored ray/wave comparisons, stop taxonomy, field-height-colored ray fans, relative illumination, and cat’s-eye pupil maps. [![Open apertures in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/galwiner/owl-widgets/blob/main/notebooks/apertures.py)
+- **Keplerian telescope:** contrasts a two-positive-lens ray-optical afocal spacing ($f_{obj} + f_{eye}$) with the spacing that minimizes Gaussian-beam divergence. [![Open the Keplerian telescope in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/galwiner/owl-widgets/blob/main/notebooks/keplerian_telescope.py)
 
 Each experiment owns independent inputs. Study controls update their plots and the notebook's downstream tables and narrative together.
 
