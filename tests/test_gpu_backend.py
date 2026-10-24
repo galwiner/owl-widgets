@@ -49,6 +49,70 @@ def test_auto_falls_back_and_explicit_gpu_has_clear_error(monkeypatch):
         _array_backend.resolve_backend("cuda")
 
 
+def test_preloads_cufft_from_nvidia_wheel_on_linux(monkeypatch, tmp_path):
+    library = tmp_path / "nvidia" / "cufft" / "lib" / "libcufft.so.11"
+    library.parent.mkdir(parents=True)
+    library.touch()
+
+    class Distribution:
+        files = ["nvidia/cufft/lib/libcufft.so.11"]
+
+        @staticmethod
+        def locate_file(file):
+            return tmp_path / file
+
+    loaded = []
+    monkeypatch.setattr(_array_backend.sys, "platform", "linux")
+    monkeypatch.setattr(_array_backend, "distribution", lambda name: Distribution())
+    monkeypatch.setattr(
+        _array_backend.ctypes,
+        "CDLL",
+        lambda path, mode: loaded.append((path, mode)),
+    )
+
+    _array_backend._preload_wheel_cufft()
+
+    assert loaded == [(str(library), _array_backend.ctypes.RTLD_GLOBAL)]
+
+
+def test_gpu_preloads_wheel_cufft_before_lazy_fft_import(monkeypatch):
+    events = []
+
+    class Runtime:
+        getDeviceCount = staticmethod(lambda: 1)
+        getDevice = staticmethod(lambda: 0)
+        getDeviceProperties = staticmethod(lambda device_id: {"name": b"Test GPU"})
+
+    class FFT:
+        @staticmethod
+        def fft2(value):
+            events.append("fft")
+            assert events == ["preload", "fft"]
+            return value
+
+    fake_cupy = type("FakeCuPy", (), {
+        "cuda": type("Cuda", (), {
+            "runtime": Runtime,
+            "Stream": type("Stream", (), {
+                "null": type("Null", (), {"synchronize": staticmethod(lambda: None)})()
+            }),
+        }),
+        "fft": FFT,
+        "complex128": complex,
+        "zeros": staticmethod(lambda shape, dtype=None: np.zeros(shape, dtype=dtype)),
+        "asnumpy": staticmethod(np.asarray),
+    })()
+    monkeypatch.setattr(_array_backend, "import_module", lambda name: fake_cupy)
+    monkeypatch.setattr(
+        _array_backend, "_preload_wheel_cufft", lambda: events.append("preload")
+    )
+
+    resolved = _array_backend.resolve_backend("gpu")
+
+    assert resolved.name == "gpu"
+    assert events == ["preload", "fft"]
+
+
 def test_auto_falls_back_when_cufft_is_missing(monkeypatch):
     class Runtime:
         @staticmethod

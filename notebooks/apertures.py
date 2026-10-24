@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo==0.24.0",
-#     "owl-widgets[gpu]==0.1.3",
+#     "owl-widgets[gpu]==0.1.4",
 # ]
 # ///
 

@@ -38,7 +38,7 @@ uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/apertures.py
 uvx --from marimo==0.24.0 marimo edit --sandbox notebooks/keplerian_telescope.py
 ```
 
-Each notebook declares all dependencies inline (PEP 723) and pins `owl-widgets[gpu]==0.1.3` from PyPI. No global installation, local checkout, or `sys.path` modification is needed.
+Each notebook declares all dependencies inline (PEP 723) and pins `owl-widgets[gpu]==0.1.4` from PyPI. No global installation, local checkout, or `sys.path` modification is needed.
 
 - **Optics basics:** free propagation, thin lenses, ray focus versus Gaussian waist, wavelength tuning, mirrors, interfaces, and thick lenses. [![Open optics basics in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/galwiner/owl-widgets/blob/main/notebooks/optics_basics.py)
 - **Apertures:** controlled Fresnel aperture sweeps, brightest-plane spots, launch-height-colored ray/wave comparisons, stop taxonomy, field-height-colored ray fans, relative illumination, and cat’s-eye pupil maps. [![Open apertures in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/galwiner/owl-widgets/blob/main/notebooks/apertures.py)
@@ -220,6 +220,6 @@ Contributions are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md). Report susp
 
 ## Publication
 
-Distribution name: `owl-widgets`; Python import: `owl`; working version: `0.1.3`. Licensed under the MIT License; see `LICENSE`.
+Distribution name: `owl-widgets`; Python import: `owl`; working version: `0.1.4`. Licensed under the MIT License; see `LICENSE`.
 
-Version `0.1.3` is published at [PyPI](https://pypi.org/project/owl-widgets/0.1.3/). The example notebooks pin that release in their inline PEP 723 dependencies. Existing `abcd/` notebooks are unchanged.
+Version `0.1.4` is published at [PyPI](https://pypi.org/project/owl-widgets/0.1.4/). The example notebooks pin that release in their inline PEP 723 dependencies. Existing `abcd/` notebooks are unchanged.

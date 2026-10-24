@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "owl-widgets"
-version = "0.1.3"
+version = "0.1.4"
 description = "OWL: composable optics widgets for Python notebooks"
 readme = "README.md"
 license = "MIT"

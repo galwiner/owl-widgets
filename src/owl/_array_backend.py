@@ -1,12 +1,39 @@
 """Lazy selection of the NumPy or optional CuPy array backend."""
 
+import ctypes
+import sys
 from dataclasses import dataclass
 from importlib import import_module
+from importlib.metadata import PackageNotFoundError, distribution
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 _BACKEND_NAMES = frozenset(("auto", "cpu", "gpu"))
+
+
+def _preload_wheel_cufft() -> None:
+    """Expose cuFFT installed by NVIDIA's component wheel to CuPy.
+
+    Some sandboxed Linux environments do not add the component wheel's library
+    directory to the dynamic loader path. Loading its soname by absolute path
+    lets CuPy's subsequent lazy import resolve the already-loaded library.
+    """
+    if sys.platform != "linux":
+        return
+    try:
+        dist = distribution("nvidia-cufft-cu12")
+    except PackageNotFoundError:
+        return
+
+    candidates = sorted(
+        Path(str(dist.locate_file(file)))
+        for file in dist.files or ()
+        if Path(str(file)).name == "libcufft.so.11"
+    )
+    if candidates:
+        ctypes.CDLL(str(candidates[0]), mode=ctypes.RTLD_GLOBAL)
 
 
 @dataclass(frozen=True)
@@ -49,6 +76,7 @@ def resolve_backend(name: str = "cpu") -> ArrayBackend:
             raise RuntimeError("no CUDA devices were detected")
         # Force context creation and a real FFT. CuPy imports cuFFT lazily, so a
         # simple allocation can succeed even when the runtime lacks libcufft.
+        _preload_wheel_cufft()
         probe = cupy.zeros((2, 2), dtype=cupy.complex128)
         cupy.fft.fft2(probe)
         cupy.cuda.Stream.null.synchronize()

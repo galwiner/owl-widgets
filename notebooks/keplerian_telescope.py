@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["marimo==0.24.0", "owl-widgets[gpu]==0.1.3", "numpy>=2", "matplotlib>=3.9", "wigglystuff>=0.1.0,<=0.2.22"]
+# dependencies = ["marimo==0.24.0", "owl-widgets[gpu]==0.1.4", "numpy>=2", "matplotlib>=3.9", "wigglystuff>=0.1.0,<=0.2.22"]
 # ///
 
 import marimo
